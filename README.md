@@ -159,8 +159,20 @@ unchanged.
 ```bash
 python render_blender.py --variant top --level 5 --limit 1
 python render_blender.py --puzzle output/octahedron/level_05/puzzle_0001
-python render_blender.py --variant top --suffix _blender   # write alongside
+python render_blender.py --variant top --suffix _blender
 ```
+
+`--suffix` writes alongside the matplotlib renders instead of over them, for
+comparing the two. To keep the two renderers' output apart entirely, move the
+old images to a parallel tree and let Blender write the canonical names:
+
+```bash
+# matplotlib renders -> output_matplotlib/, Blender renders -> output/
+python render_blender.py --variant top --suffix _blender
+```
+
+`metadata.json` names `initial.png` and `cot_NN.png`, so whichever renderer owns
+those filenames inside `output/` is the one the pipeline reads.
 
 `render_blender.py` finds the Blender binary and shells out to it; set
 `BLENDER_PATH` or pass `--blender` if it is installed somewhere unusual. The

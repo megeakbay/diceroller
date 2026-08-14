@@ -7,6 +7,8 @@ output/
 output_*/
 output.zip
 traces/
+# Renders kept aside for comparison (matplotlib vs Blender)
+output_matplotlib/
 dataset.jsonl
 *.jsonl
 tool_use_results.json

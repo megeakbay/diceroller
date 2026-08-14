@@ -32,7 +32,12 @@ import random
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from matplotlib.patches import Polygon as MplPolygon
+
+# matplotlib is imported lazily, inside the drawing functions that need it.
+# The geometry and kinematics above them do not, and Blender's bundled Python
+# has no matplotlib -- a module-level import would make this file unimportable
+# there, taking the orientation graph with it. Keeping it lazy lets
+# blender_render.py reuse the real kinematics instead of restating them.
 
 # ============================================================================
 # Geometry
@@ -537,6 +542,8 @@ def _draw_board_border(ax, board) -> None:
     land well inside the drawn area and read as stray black lines across the
     board. The hull gives the straight outline a board is expected to have.
     """
+    from matplotlib.patches import Polygon as MplPolygon
+
     from generator import BOARD_EDGE
 
     points = np.vstack([

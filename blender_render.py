@@ -233,6 +233,12 @@ def setup_world(strength: float = 1.0) -> None:
     brighter overhead than at the horizon gives surfaces a direction-dependent
     ambient term, so faces angled differently pick up different light even
     where no lamp reaches them.
+
+    The gradient is *neutral* -- white grading to a dimmer white, never a
+    coloured sky. An earlier version graded toward a bluish grey, which tinted
+    the white board: ambient light carries its own colour onto every diffuse
+    surface, so a blue-grey environment makes a white floor render blue-grey.
+    Brightness may vary here; hue may not.
     """
     world = bpy.data.worlds.new("World")
     bpy.context.scene.world = world
@@ -244,18 +250,30 @@ def setup_world(strength: float = 1.0) -> None:
     bg = nodes.new("ShaderNodeBackground")
     bg.inputs["Strength"].default_value = strength
 
-    # Sky-ish gradient driven by the z component of the view direction.
+    # Neutral vertical gradient: full white overhead, slightly dimmer below.
+    # This is what *lights* the scene. What the camera sees behind the board is
+    # forced to pure white separately below, so the page never renders grey.
     tex = nodes.new("ShaderNodeTexCoord")
     sep = nodes.new("ShaderNodeSeparateXYZ")
     ramp = nodes.new("ShaderNodeValToRGB")
     ramp.color_ramp.elements[0].position = 0.0
-    ramp.color_ramp.elements[0].color = (0.72, 0.74, 0.78, 1.0)
+    ramp.color_ramp.elements[0].color = (0.88, 0.88, 0.88, 1.0)
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
 
+    # A Light Path node splits "what lights the scene" from "what the camera
+    # sees". Camera rays get flat white; every other ray keeps the gradient, so
+    # the backdrop is pure #FFFFFF while surfaces still receive graded ambient
+    # light. Without this the gradient's dim lower half renders as a grey page.
+    lp = nodes.new("ShaderNodeLightPath")
+    mix = nodes.new("ShaderNodeMixRGB")
+    mix.inputs["Color2"].default_value = (1.0, 1.0, 1.0, 1.0)
+
     links.new(tex.outputs["Generated"], sep.inputs["Vector"])
     links.new(sep.outputs["Z"], ramp.inputs["Fac"])
-    links.new(ramp.outputs["Color"], bg.inputs["Color"])
+    links.new(ramp.outputs["Color"], mix.inputs["Color1"])
+    links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
+    links.new(mix.outputs["Color"], bg.inputs["Color"])
     links.new(bg.outputs["Background"], out.inputs["Surface"])
 
 
@@ -487,6 +505,75 @@ def add_ribbon(name: str, points: Sequence[Sequence[float]], width: float,
     return new_mesh_object(name, verts, faces, material)
 
 
+def add_contact_shadow(name: str, centre, size: float, z: float = 0.003,
+                       strength: float = 0.30, spread: float = 0.55,
+                       offset=(0.0, 0.0)) -> Any:
+    """
+    A soft dark patch on the board, standing in for the die's cast shadow.
+
+    The playing surface is emissive so it renders exactly white everywhere, and
+    an emissive surface cannot receive a real shadow -- the two requirements
+    genuinely conflict. Painting the contact shadow as its own decal resolves
+    it: the floor stays pure #FFFFFF except directly beneath the solid, which
+    is the one place a shadow carries information (that the die is standing on
+    the board rather than floating above it).
+
+    A radial gradient with no hard rim, so it reads as ambient occlusion
+    tightening under the body rather than as a drawn ellipse.
+    """
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    nodes.clear()
+
+    out = nodes.new("ShaderNodeOutputMaterial")
+    # Emission shading a grey-to-white gradient, not a transparency blend.
+    # Alpha blending here produced a hard opaque quad in EEVEE (blend mode and
+    # shadow settings differ between engines and Blender versions); emitting
+    # the shadow's *colour* against the white board needs no alpha at all, so
+    # it looks the same in both engines.
+    emit = nodes.new("ShaderNodeEmission")
+
+    grad = nodes.new("ShaderNodeTexGradient")
+    grad.gradient_type = "SPHERICAL"
+    texco = nodes.new("ShaderNodeTexCoord")
+    ramp = nodes.new("ShaderNodeValToRGB")
+    # The spherical gradient is 1 at the centre and falls to 0 at the edge, so
+    # position 0 is the patch rim (white, invisible against the board) and
+    # position 1 is directly under the solid (darkest).
+    shade = max(0.0, min(1.0, 1.0 - strength))
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
+    ramp.color_ramp.elements[1].position = max(0.05, min(0.95, spread))
+    ramp.color_ramp.elements[1].color = (shade, shade, shade, 1.0)
+    # Ease the falloff so the rim blends into the board instead of banding.
+    for el in ramp.color_ramp.elements:
+        el.color = tuple(el.color)
+    ramp.color_ramp.interpolation = "EASE"
+
+    links.new(texco.outputs["Object"], grad.inputs["Vector"])
+    links.new(grad.outputs["Color"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], emit.inputs["Color"])
+    links.new(emit.outputs[0], out.inputs["Surface"])
+
+    # Built at the origin and then positioned: the gradient is driven by Object
+    # coordinates, so the mesh must be centred on its own origin or the falloff
+    # is sampled off-centre and the patch renders as a flat slab.
+    half = size / 2.0
+    obj = new_mesh_object(
+        name,
+        [(-half, -half, 0.0), (half, -half, 0.0),
+         (half, half, 0.0), (-half, half, 0.0)],
+        [(0, 1, 2, 3)],
+        mat,
+    )
+    obj.location = (centre[0] + offset[0], centre[1] + offset[1], z)
+    # Never let the decal catch light or cast its own shadow.
+    if hasattr(obj, "visible_shadow"):
+        obj.visible_shadow = False
+    return obj
+
+
 def draw_route(points: Sequence[Sequence[float]], color: str, dashed: bool,
                z: float, width: float = 0.14, name: str = "route") -> None:
     """
@@ -557,23 +644,37 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 
 
 def build_cube_board(board: Dict[str, Any]) -> None:
-    """The board: a white slab, grid rules as thin tubes, blocked cells inset."""
+    """The board: a white slab, grid rules as flat inlays, blocked cells inset."""
     bw, bh = board["width"], board["height"]
     thickness = 0.18
 
-    # A slab with real thickness, not a plane: the visible side wall gives the
-    # board a physical presence and catches the key light at a different angle
-    # from the top, which reads as a solid object under the die.
-    surface_mat = make_material("board", rgba(BOARD_SURFACE), roughness=0.85,
-                                sheen=0.1)
+    # The playing surface is emissive white, so it renders exactly #FFFFFF
+    # everywhere -- no shading falloff across the board, no cast shadow, and no
+    # tint picked up from the environment. A lit diffuse floor cannot do that:
+    # it necessarily darkens away from the key light, which greys the far half
+    # of the board and defeats the palette's white surface.
+    #
+    # The die is unaffected. It is still fully lit and still casts its shadow
+    # onto everything that is lit; only this one surface refuses to receive it.
+    top_mat = make_material("board_top", rgba(BOARD_SURFACE), shadeless=True)
+    # The side walls stay lit, so the slab still reads as a solid object with
+    # thickness rather than a glowing sheet of paper.
+    side_mat = make_material("board_side", rgba(BOARD_SURFACE), roughness=0.85,
+                             sheen=0.1)
+
     verts = [
         (0, 0, 0), (bw, 0, 0), (bw, bh, 0), (0, bh, 0),
         (0, 0, -thickness), (bw, 0, -thickness),
         (bw, bh, -thickness), (0, bh, -thickness),
     ]
+    # Face 0 is the top; the rest are the underside and the four walls.
     faces = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
              (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-    slab = new_mesh_object("board", verts, faces, surface_mat)
+    slab = new_mesh_object("board", verts, faces, top_mat)
+    slab.data.materials.append(side_mat)
+    for poly in slab.data.polygons:
+        poly.material_index = 0 if poly.index == 0 else 1
+
     slab_bevel = slab.modifiers.new("Bevel", "BEVEL")
     slab_bevel.width = 0.02
     slab_bevel.segments = 2
@@ -591,9 +692,14 @@ def build_cube_board(board: Dict[str, Any]) -> None:
 
     # Outer border: heavier, and true black, so the board's extent is
     # unambiguous now that the surface matches the page.
+    #
+    # Inset by half its own width so the ribbon lies wholly on the flat top
+    # rather than draping over the slab's bevelled lip, where the rounding cut
+    # it off and left the border broken along the near edges.
     edge_mat = make_material("board_edge", rgba(BOARD_EDGE), shadeless=True)
-    corners = [(0, 0), (bw, 0), (bw, bh), (0, bh), (0, 0)]
-    add_ribbon("border", corners, 0.06, edge_mat, 0.007)
+    b = 0.03
+    corners = [(b, b), (bw - b, b), (bw - b, bh - b), (b, bh - b), (b, b)]
+    add_ribbon("border", corners, 0.06, edge_mat, 0.009)
 
     blocked_mat = make_material("blocked", rgba(BLOCKED), roughness=0.7)
     for cx, cy in board.get("blocked", []):
@@ -773,6 +879,12 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
     for j, (a, b) in enumerate(dash_segments(mc, dash=0.16, gap=0.11)):
         add_ribbon(f"marker_{j}", [a, b], 0.05, marker_mat, 0.012)
 
+    # Contact shadow first, so the die is built over it. Offset away from the
+    # key light, which sits 50 degrees off the camera azimuth.
+    px, py = entry["position"]
+    add_contact_shadow("die_shadow", (px + 0.5, py + 0.5), size=2.1,
+                       strength=0.32, spread=0.42, offset=(-0.12, -0.12))
+
     build_die(entry["position"], entry["die"])
 
     target = (bw / 2.0, bh / 2.0, 0.0)
@@ -808,8 +920,10 @@ def load_octahedron_module():
 
 def build_octahedron_board(board, oct_) -> None:
     """Triangular lattice cells as flat polygons, with a heavy hull border."""
-    surface_mat = make_material("oct_board", rgba(BOARD_SURFACE), roughness=0.85,
-                                sheen=0.1)
+    # Emissive white, for the same reason as the cube board: a lit floor
+    # darkens away from the key light and takes the solid's shadow, both of
+    # which grey a surface the palette specifies as white.
+    surface_mat = make_material("oct_board", rgba(BOARD_SURFACE), shadeless=True)
     grid_mat = make_material("oct_grid", rgba(GRID_LINE), shadeless=True)
 
     all_pts = []
@@ -943,40 +1057,59 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
              float(c[2] * scale)),
             (float(n[0]), float(n[1]), float(n[2])),
             text_mat,
+            # Direction from the board toward the viewer. This is exactly
+            # octahedron.CAMERA, which is why face visibility above and glyph
+            # facing here stay consistent by construction.
+            view=(float(camera[0]), float(camera[1]), float(camera[2])),
         )
 
 
-def add_face_number(value: int, centre, normal, material) -> Any:
+def add_face_number(value: int, centre, normal, material,
+                    view: "Vector" = None) -> Any:
     """
-    Place a face's number, lying in that face's plane and lifted clear of it.
+    Place a face's number, anchored to that face but turned to face the camera.
 
-    The glyph is rotated so its own +Z matches the face normal and then rolled
-    so its up axis is as close to world up as that plane allows -- otherwise
-    numbers on the lower faces render upside down and become unreadable.
+    The label is **billboarded**: it takes the camera's own rotation rather
+    than a frame built from the face normal. Deriving the frame from the face
+    is the obvious approach and it does not work -- an octahedron's faces are
+    tilted in three axes at once, so a basis that is correctly right-handed can
+    still present the glyph edge-on, rolled, or seen from its reverse side,
+    which renders it mirrored. A mirrored 5 reads as a 2, silently corrupting
+    the value the task asks the model to read off the picture.
+
+    Billboarding sidesteps all of it: every digit is upright and unmirrored by
+    construction, which is what the 2D renderer got for free by drawing text at
+    a projected centroid. The label is nudged along the face normal so it sits
+    clear of the surface it belongs to.
     """
     curve = bpy.data.curves.new(f"num_{value}", type="FONT")
     curve.body = str(value)
     curve.align_x = "CENTER"
     curve.align_y = "CENTER"
     curve.size = 0.34
-    curve.extrude = 0.012
+    curve.extrude = 0.004
 
     obj = bpy.data.objects.new(f"num_{value}", curve)
     obj.data.materials.append(material)
     bpy.context.collection.objects.link(obj)
 
     n = Vector(normal).normalized()
-    world_up = Vector((0.0, 0.0, 1.0))
-    if abs(n.dot(world_up)) > 0.999:
-        world_up = Vector((0.0, 1.0, 0.0))
-    right = world_up.cross(n).normalized()
-    up = n.cross(right).normalized()
-    obj.matrix_world = Matrix((
-        (right.x, up.x, n.x, centre[0] + n.x * 0.02),
-        (right.y, up.y, n.y, centre[1] + n.y * 0.02),
-        (right.z, up.z, n.z, centre[2] + n.z * 0.02),
-        (0.0, 0.0, 0.0, 1.0),
-    ))
+    # Lift the glyph off its face, along that face's own normal, so it is never
+    # buried in the surface or z-fighting with it.
+    #
+    # The offset is along the normal and nothing else. An earlier version also
+    # pulled the label toward the solid's centre, meaning to stop the topmost
+    # digit overhanging the silhouette; it instead dragged every label off its
+    # own face and onto its neighbour, which is far worse than a slight
+    # crop -- the digit must stay on the face whose value it reports.
+    lift = 0.06
+    obj.location = (centre[0] + n.x * lift,
+                    centre[1] + n.y * lift,
+                    centre[2] + n.z * lift)
+
+    cam = bpy.context.scene.camera
+    if cam is not None:
+        obj.rotation_euler = cam.rotation_euler.copy()
     return obj
 
 
@@ -1014,14 +1147,21 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
                 dash_segments(poly + [poly[0]], dash=0.16, gap=0.11)):
             add_ribbon(f"oct_marker_{j}", [a, b], 0.048, marker_mat, 0.014)
 
-    build_octahedron(at, orientation, oct_)
+    # Contact shadow under the resting face. Tighter than the cube's: the
+    # octahedron touches the board on one small triangle, so a broad patch
+    # would read as a shadow belonging to something else.
+    add_contact_shadow("oct_shadow", (at[0], at[1]), size=1.5,
+                       strength=0.30, spread=0.38, offset=(-0.06, -0.06))
 
     xs = [c[0] for c in [cell["centre"] for cell in board.values()]]
     ys = [c[1] for c in [cell["centre"] for cell in board.values()]]
     target = ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0, 0.35)
     ortho = max(max(xs) - min(xs), 3.0) * 1.30 + 1.5
 
+    # Camera before the solid: the face labels are rolled against the camera's
+    # up axis so they read upright on screen, which needs the camera in place.
     setup_camera(target, OCT_ELEVATION, OCT_AZIMUTH, ortho)
+    build_octahedron(at, orientation, oct_)
     setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
     # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
     # the 2D renderer used.
@@ -1055,6 +1195,15 @@ def render_puzzle(puzzle_dir: Path, args: argparse.Namespace) -> int:
 
     variant = meta.get("variant", "top")
     suffix = args.suffix or ""
+
+    # Resolve the per-variant resolution defaults here, so the renderers and
+    # the log agree on one number rather than each filling in its own.
+    if args.width is None or args.height is None:
+        dw, dh = (1500, 975) if variant == "octahedron" else (1000, 1000)
+        args = argparse.Namespace(**vars(args))
+        args.width = args.width or dw
+        args.height = args.height or dh
+    print(f"  {puzzle_dir.name}: {variant} at {args.width}x{args.height}")
 
     def out(name: str) -> Path:
         stem, ext = os.path.splitext(name)
@@ -1182,8 +1331,9 @@ def main() -> None:
     if not puzzles:
         sys.exit("No puzzles matched.")
 
-    print(f"Rendering {len(puzzles)} puzzle(s) with "
-          f"{args.engine} at {args.width}x{args.height}")
+    size = ("per variant" if args.width is None or args.height is None
+            else f"{args.width}x{args.height}")
+    print(f"Rendering {len(puzzles)} puzzle(s) with {args.engine} at {size}")
 
     total = 0
     for puzzle in puzzles:
