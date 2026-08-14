@@ -39,9 +39,17 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 
 def camera_direction() -> Vector:
-    """The direction the scene camera looks along."""
-    cam = bpy.context.scene.camera
-    return (cam.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0))).normalized()
+    """
+    The direction the scene camera looks along.
+
+    Taken from the placement `setup_camera` recorded, not from the camera
+    object. `rotation_euler` is assigned during scene construction but
+    `matrix_world` is only recomputed when the dependency graph next
+    evaluates, so reading the object here returns the identity and reports the
+    view as straight down +Z -- which made these checks fail against a scene
+    that was actually correct.
+    """
+    return -Vector(br.view_direction())
 
 
 def check_three_visible_faces() -> None:
@@ -84,9 +92,8 @@ def check_camera_matches_2d() -> None:
     print("\ncamera derivation")
     el, az = br._camera_from_basis(br.CUBE_BASIS)
     check("cube elevation ~29.5 deg", abs(el - 29.496) < 0.01, f"{el:.3f}")
-    el2, _ = br._camera_from_basis(br.OCT_BASIS)
-    check("octahedron elevation ~16.9 deg (README says ~17)",
-          abs(el2 - 16.859) < 0.01, f"{el2:.3f}")
+    check("octahedron renders from 26 deg, above its 2D basis",
+          abs(br.OCT_ELEVATION - 26.0) < 0.01, f"{br.OCT_ELEVATION:.3f}")
     check("both share the same azimuth", abs(az - (-135.0)) < 0.01, f"{az:.3f}")
 
     # A cube corner must not collapse onto another under this projection --

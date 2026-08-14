@@ -776,6 +776,12 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 # between 37 and 60 degrees off level, which no choice of corner can fix.
 # ============================================================================
 
+# How much of a tile the digit's ink occupies. The UV mapping is scaled against
+# this same number, so the glyph is guaranteed to land inside the triangle it
+# belongs to rather than overhanging an edge.
+GLYPH_FRACTION = 0.34
+
+
 # Classic digit outlines, as stroke paths in a unit box.
 #
 # The digits were drawn as seven segments first, which reads as a calculator
@@ -792,24 +798,37 @@ def _arc(cx, cy, rx, ry, a0, a1, steps=16):
     return out
 
 
+# Each digit is a list of independent strokes. Keeping the bowl and the stem as
+# separate strokes matters: chaining them into one polyline draws a connecting
+# segment across the glyph, which is what turned the 6 into something that read
+# as a "d" -- its tail was being drawn up the right-hand side of the bowl.
 _DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
-    0: [_arc(0.50, 0.50, 0.26, 0.42, 0, 360)],
-    1: [[(0.32, 0.74), (0.50, 0.92), (0.50, 0.08)],
-        [(0.30, 0.08), (0.70, 0.08)]],
-    2: [_arc(0.50, 0.68, 0.24, 0.24, 180, -20)
-        + [(0.24, 0.08), (0.76, 0.08)]],
-    3: [_arc(0.50, 0.71, 0.22, 0.21, 160, -90)
-        + _arc(0.50, 0.30, 0.25, 0.24, 90, -160)],
-    4: [[(0.66, 0.08), (0.66, 0.92), (0.20, 0.30), (0.80, 0.30)]],
-    5: [[(0.72, 0.92), (0.32, 0.92), (0.28, 0.55)]
-        + _arc(0.50, 0.32, 0.25, 0.24, 100, -150)],
-    6: [_arc(0.50, 0.30, 0.25, 0.25, 0, 360)
-        + [(0.75, 0.34), (0.66, 0.88)]],
-    7: [[(0.24, 0.92), (0.76, 0.92), (0.40, 0.08)]],
-    8: [_arc(0.50, 0.70, 0.21, 0.21, 0, 360),
-        _arc(0.50, 0.29, 0.25, 0.25, 0, 360)],
-    9: [_arc(0.50, 0.70, 0.25, 0.25, 0, 360)
-        + [(0.25, 0.66), (0.34, 0.12)]],
+    0: [_arc(0.50, 0.50, 0.25, 0.40, 0, 360, steps=28)],
+    1: [[(0.30, 0.74), (0.50, 0.92), (0.50, 0.08)],
+        [(0.28, 0.08), (0.72, 0.08)]],
+    # Top bowl opening to the right, then the diagonal down to a flat base.
+    2: [_arc(0.50, 0.68, 0.23, 0.22, 190, -35, steps=22)
+        + [(0.26, 0.08)],
+        [(0.24, 0.08), (0.78, 0.08)]],
+    # Two right-facing bowls meeting at the waist.
+    3: [_arc(0.50, 0.70, 0.22, 0.21, 165, -80, steps=22),
+        _arc(0.50, 0.30, 0.24, 0.23, 80, -170, steps=22)],
+    4: [[(0.66, 0.08), (0.66, 0.92)],
+        [(0.66, 0.92), (0.18, 0.30), (0.84, 0.30)]],
+    # Flat top bar, down the left, then the lower bowl.
+    5: [[(0.74, 0.92), (0.32, 0.92), (0.30, 0.56)],
+        _arc(0.50, 0.32, 0.24, 0.23, 105, -150, steps=22)],
+    # Lower bowl, plus a spine curving up and to the RIGHT from it. Drawing the
+    # spine on the right of the bowl is what makes a 6 rather than a d.
+    6: [_arc(0.50, 0.30, 0.24, 0.24, 0, 360, steps=26),
+        _arc(0.62, 0.56, 0.36, 0.36, 205, 122, steps=20)],
+    7: [[(0.24, 0.92), (0.78, 0.92), (0.42, 0.08)]],
+    8: [_arc(0.50, 0.69, 0.20, 0.20, 0, 360, steps=24),
+        _arc(0.50, 0.29, 0.24, 0.24, 0, 360, steps=26)],
+    # Upper bowl, with the tail falling on the right -- the 6 turned about its
+    # centre.
+    9: [_arc(0.50, 0.70, 0.24, 0.24, 0, 360, steps=26),
+        _arc(0.38, 0.44, 0.36, 0.36, 25, -58, steps=20)],
 }
 
 
@@ -879,7 +898,7 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # so a number sits within its face with clear space around it rather
         # than crowding the edges, which on a triangular face makes it harder to
         # tell which face a digit belongs to.
-        inner = int(tile * 0.34)
+        inner = int(tile * GLYPH_FRACTION)
         pad = (tile - inner) // 2
         for (dx, dy) in _digit_pixels(value, inner):
             x, y = cx + pad + dx, cy + pad + dy
@@ -970,19 +989,31 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         # which slid every digit toward the base of the solid.
         mid_u = sum(us) / len(us)
         mid_v = sum(vs) / len(vs)
-        # One scale for both axes, taken from the larger span. Fitting u and v
-        # independently was tried, to counter-stretch each face by however much
-        # it is foreshortened; it distorted the faces turned toward the camera
-        # without fixing the level one, so the uniform scale stands.
+        # Scale so the glyph's square lands inside the projected triangle.
         #
-        # The face must map *inside* its tile. An earlier version scaled it to
-        # 1.55x the tile so the digit would look small within the face, but that
-        # pushed the corners out to uv -0.39 and +1.31; with EXTEND sampling
-        # everything past the edge repeats the tile's border pixel, which is why
-        # whole faces came out flat white. Keeping the mapping inside the tile
-        # and shrinking the drawn glyph instead gives the same proportions with
-        # no sampling outside the tile at all.
-        fit = 1.30 / span
+        # Fitting the face's bounding box to the tile does not do that: a
+        # triangle covers only half its box, so a square centred in the box
+        # overhangs two of the three edges, and measured across all 24
+        # orientations half of every visible face had its digit escaping. What
+        # bounds a centred square is the triangle's inradius -- the largest
+        # circle that fits -- so the mapping is scaled against that instead.
+        ax, ay = pts[0]
+        bx, by = pts[1]
+        cxx, cyy = pts[2]
+        side_a = math.hypot(bx - cxx, by - cyy)
+        side_b = math.hypot(ax - cxx, ay - cyy)
+        side_c = math.hypot(ax - bx, ay - by)
+        perim = side_a + side_b + side_c
+        area = abs((bx - ax) * (cyy - ay) - (cxx - ax) * (by - ay)) / 2.0
+        inradius = (2.0 * area / perim) if perim > 1e-9 else 0.0
+
+        # A square of side s fits inside a circle of radius r when s <= r*sqrt2.
+        # GLYPH_FRACTION of the tile is ink, so the tile must map to a region
+        # whose inradius covers that square.
+        if inradius > 1e-9:
+            fit = (GLYPH_FRACTION / math.sqrt(2.0)) / inradius
+        else:
+            fit = 1.30 / span
 
         for loop, (pu, pv) in zip(face.loops, pts):
             u = 0.5 + (pu - mid_u) * fit
@@ -1504,14 +1535,28 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     # Compositing keeps the geometry honest and settles only the occlusion,
     # which is the single thing that was wrong. It is what the 2D renderer did
     # by giving the route a higher zorder than the die.
+    # Only the part of the route that the solid actually hides is composited.
+    #
+    # Painting the whole route over the scene fixes the disappearing run but
+    # creates a worse problem: on frames where the route passes *in front* of
+    # the solid there was nothing to fix, and the overlay then draws an arrow
+    # straight across the body, which reads as the route going through the die.
+    #
+    # A route point is behind the solid when it is further from the camera than
+    # the body is, so only points beyond that depth need lifting over it.
     scene = bpy.context.scene
     route_objects = [ob for ob in bpy.data.objects
                      if ob.name.startswith(("oct_done", "oct_todo"))]
 
+    view = Vector(view_direction())          # board -> camera
+    solid_depth = Vector((at[0], at[1], 0.0)).dot(view)
+    behind = [p for p in pts if Vector((p[0], p[1], 0.0)).dot(view) < solid_depth]
+    route_hidden = len(behind) > 0
+
     scene.render.filepath = str(out_path)
     bpy.ops.render.render(write_still=True)
 
-    if route_objects and not args.transparent:
+    if route_objects and route_hidden and not args.transparent:
         base = bpy.data.images.load(str(out_path))
         base_px = list(base.pixels)
 

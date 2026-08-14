@@ -157,97 +157,171 @@ scripts, the judges and `evaluate_responses.py` run against either renderer
 unchanged.
 
 ```bash
-python render_blender.py --variant top --level 5 --limit 1
+python render_blender.py --variant top --level 5
+python render_blender.py --variant octahedron --level 5
 python render_blender.py --puzzle output/octahedron/level_05/puzzle_0001
-python render_blender.py --variant top --suffix _blender
 ```
 
-`--suffix` writes alongside the matplotlib renders instead of over them, for
-comparing the two. To keep the two renderers' output apart entirely, move the
-old images to a parallel tree and let Blender write the canonical names:
-
-```bash
-# matplotlib renders -> output_matplotlib/, Blender renders -> output/
-python render_blender.py --variant top --suffix _blender
-```
-
-`metadata.json` names `initial.png` and `cot_NN.png`, so whichever renderer owns
-those filenames inside `output/` is the one the pipeline reads.
-
-`render_blender.py` finds the Blender binary and shells out to it; set
+`render_blender.py` locates the Blender binary and shells out to it; set
 `BLENDER_PATH` or pass `--blender` if it is installed somewhere unusual. The
-renderer itself must run inside Blender:
+renderer itself only runs inside Blender:
 
 ```bash
 blender --background --python blender_render.py -- --puzzle <dir>
 ```
 
-The camera is not re-tuned by eye. A parallel projection collapses exactly the
-direction its matrix sends to zero, so the viewpoint each matplotlib basis
-implies is that matrix's null space — **29.5 degrees** of elevation for the
-cube and **16.86** for the octahedron, the latter matching the ~17 degrees the
-side-on view was chosen for above. `--check-angles` prints both and runs
-outside Blender.
+Useful flags: `--suffix _blender` writes alongside the matplotlib images
+instead of over them, `--engine eevee` trades some quality for speed,
+`--samples` sets the Cycles sample count, and `--elevation` overrides the
+octahedron camera height. `metadata.json` names `initial.png` and
+`cot_NN.png`, so whichever renderer owns those filenames inside `output/` is
+the one the rest of the pipeline reads.
 
-Three properties of the images are load-bearing for the benchmark, and the port
-keeps each one:
+### What the port has to preserve
+
+These are benchmark stimuli, not illustration, so three properties are
+load-bearing and the 3D version keeps each one:
 
 - **Exactly three cube faces visible.** An orthographic camera on the board's
-  near corner gives this by construction; the 2D version got it by drawing only
-  three polygons, so a fourth face could have crept in through a drawing change.
-  The three are `top`, `south` and `west` — the same three
-  `generator._draw_die_on_cell` drew. Orthographic also matters on its own:
-  under perspective the same face would read differently depending on which cell
-  the die stood on.
-- **Values stay readable.** Pips are spheres sunk into the faces and the
-  octahedron's numbers are extruded text, both rotated into their face's plane
-  so the lower faces do not render upside down.
+  near corner gives this by construction — the three are `top`, `south` and
+  `west`, the same three `generator._draw_die_on_cell` drew. The 2D version got
+  it by drawing only three polygons, so a fourth could have crept in through a
+  drawing change. Orthographic matters on its own too: under perspective the
+  same face would read differently depending on which cell the die stood on.
+- **Values stay readable.** This is what the task asks a model to recover, so
+  it constrains more of the renderer than anything else — see below.
 - **Travelled path solid, remainder dashed.** Dashes are walked along the whole
   polyline rather than restarted per segment, so the rhythm stays continuous
   through corners.
 
-### What Blender is actually used for
-
-The point of the port is the shading, not the geometry — a literal translation
-of the 2D drawing would waste the renderer. What the 3D scene buys:
-
-- **Contact shadow.** An area key light casts a penumbral shadow that tightens
-  at the die's base, which is the strongest available cue that the solid stands
-  *on* the board rather than floating over it. The matplotlib version had none.
-- **Real edges.** A bevel with hardened normals catches a highlight along every
-  corner, so the three visible faces separate even where their tones are close.
-  The 2D renderer faked that separation with three hardcoded shade factors.
-- **Moulded pips.** Pips are sunk about 60% of their radius into each face, so
-  they catch a small shadow at the rim and read as moulded rather than printed
-  on.
-- **A clear coat** on the die body, giving the tight highlight of injection
-  plastic instead of a flat matte fill.
-- **A graded environment**, brighter overhead than at the horizon, so faces
-  angled differently pick up different ambient light even out of the key.
-
-Two things deliberately stay flat. Route lines, grid rules and the start marker
-are **emissive**: they annotate the scene rather than inhabit it, so they must
-read identically over the lit and shadowed halves of the board — a dimming rule
-would look like a change of meaning. And the view transform is forced to
-**Standard**, not Blender's default AgX, which would desaturate the palette and
-turn the white board grey.
-
-Routes are drawn as mitred flat ribbons rather than chains of cylinders: a tube
-notches at every corner and its silhouette narrows on turns, while a ribbon
-keeps one even, drawn weight from this camera.
-
-Geometry and kinematics are imported from `octahedron.py` rather than restated:
-that module derives its orientation graph by rolling a real solid at import, and
-a second copy here could drift from the ground truth the dataset was generated
-against. `--engine eevee` trades some quality for speed; `--samples` sets the
-Cycles sample count.
-
-`test_blender_scene.py` covers what only exists once a scene is built — the
+`test_blender_scene.py` checks what only exists once a scene is built — the
 camera, the die geometry, and the three-visible-faces invariant:
 
 ```bash
 blender --background --python test_blender_scene.py
 ```
+
+### Camera
+
+The cube's camera is not tuned by eye. A parallel projection collapses exactly
+the direction its matrix sends to zero, so the viewpoint each matplotlib basis
+implies is that matrix's null space: **29.5 degrees** of elevation for the
+cube. `--check-angles` prints it and runs outside Blender.
+
+The octahedron is rendered from **26 degrees**, above the 16.86 its 2D basis
+encodes. That angle was chosen for line work; in a shaded render it is too
+shallow, and a lattice cell projects only 0.25 as tall as it is wide, so the
+board collapses toward a band. At 26 degrees it projects 0.38 while the
+smallest camera-facing face loses almost no area. The set of visible faces is
+unchanged, verified step by step against `octahedron.visible_values`.
+
+Raising it further is a real trade: the two faces angled away from the camera
+keep only about 28% of their width at 26 degrees, and `--elevation 42` widens
+them at the cost of looking down on the board rather than across it.
+
+### Numbers on the octahedron
+
+The cube carries its values as spheres sunk into the faces, and never had a
+placement problem — a sphere looks the same from every angle. Numerals do not:
+they have a top and a reading direction, and an octahedron's faces tilt in
+three axes at once.
+
+Placing each digit as its own 3D object meant solving orientation, handedness
+and foreshortening by hand, and every variant left some face mirrored, rolled
+or squashed to an unreadable sliver. A mirrored 5 reads as a 2, which would
+silently corrupt the value the picture is supposed to show.
+
+The digits are now **painted into the body's texture**: drawn once into an
+atlas, one tile per face, and mapped on. A number cannot detach, mirror or roll
+because it is part of the surface. The UV square is aligned to the camera's
+axes rather than the face's edges — aligning to the edges is what a real die
+does, and it was measured first: across all 24 orientations only 25% of visible
+faces can present a level baseline that way, with a median 37 degrees off
+level. Since reading the digits *is* the task, they are squared to the viewer.
+Measured after the change, 96/96 visible faces land within a fraction of a
+degree of upright.
+
+The digit shapes are stroke paths rasterised into the atlas rather than text
+rendered from a font file, so the result does not depend on which fonts a
+machine happens to have — Blender's bundled font differs between builds. Each
+digit is a set of independent strokes: chaining a bowl and its stem into one
+polyline draws a connecting segment across the glyph, which is what once turned
+the 6 into something that read as a `d`.
+
+The glyph is sized against the **inradius** of the face's projected triangle,
+not against its bounding box. A triangle covers only half its box, so a square
+centred in the box overhangs two of the three edges — measured across all 24
+orientations, half of every visible face had its digit escaping that way.
+
+Ink is mixed toward a flat black shader by the texture's own darkness. The body
+is lit, so digits on a shaded face rendered mid-grey (measured RGB 103) despite
+being drawn black.
+
+### Lighting
+
+A three-point rig: an area key for a penumbral contact shadow, a broad sun fill,
+and a low rim. The shading is the point of the port — a literal translation of
+the 2D drawing would waste the renderer:
+
+- **Contact shadow** tightening at the base is the strongest cue that the solid
+  stands *on* the board rather than floating over it. The matplotlib version had
+  none.
+- **Bevelled edges** with hardened normals catch a highlight along every corner,
+  so adjacent faces separate even where their tones are close. The 2D renderer
+  faked that with three hardcoded shade factors.
+- **A clear coat** gives the body the tight highlight of moulded plastic rather
+  than a flat matte fill.
+- **A graded environment**, brighter overhead than at the horizon, so faces at
+  different angles differ even out of the key light.
+
+The rim light is kept very low (0.15). A rim is aimed back at the camera, so a
+face turned away from the viewer meets it almost head-on and clips long before
+the faces being read do — at 1.6 the octahedron's rear-upper face rendered pure
+white and lost both its colour and its number.
+
+Two things deliberately stay flat. Grid rules and the start marker are
+**emissive**: they annotate the scene rather than inhabit it, so they must read
+identically over the lit and shadowed halves of the board. And the view
+transform is forced to **Standard**, not Blender's default AgX, which would
+desaturate the palette and turn the white board grey.
+
+The board surface is emissive white so it renders exactly `#FFFFFF` everywhere,
+with no shading falloff across it. An emissive surface cannot receive a shadow,
+so the contact shadow is painted as its own soft decal — the floor stays white
+except directly under the solid, which is the one place a shadow carries
+information.
+
+### Routes
+
+Routes are flat ribbons built one segment at a time, with a round joint at each
+corner. A single mitred strip is tidier but pushes its corner vertices out by
+`1/cos(half-angle)`, and the triangular lattice turns 60 degrees at a time, so
+a route that keeps turning the same way inflates until it folds through itself
+and reads as broken.
+
+On the octahedron the route is rendered as a **second pass and composited over
+the scene**, but only on frames where the solid actually hides part of it — a
+route point is behind the solid when it is further from the camera than the
+body. Compositing unconditionally fixes the disappearing run and then creates a
+worse problem: on frames where the route passes in front there was nothing to
+fix, and the overlay draws an arrow straight across the body, which reads as
+the route going through the die. The solid stands more than a cell tall in this view, so a route
+running toward the camera passes behind it and disappears — routes running away
+from the camera were fine, which is why only some puzzles looked broken.
+Raising the route in 3D was tried and fails differently: under a parallel
+projection height also shifts a point sideways, measured at 2.67 units for the
+height needed to clear the apex, so it no longer lined up with the cells it
+names. Compositing settles the occlusion and nothing else, which is what the 2D
+renderer did by giving the route a higher zorder than the die.
+
+The composite deliberately does not paint over dark pixels. The route must win
+against the body or it breaks up; it must not win against the numbers, since a
+dash laid across a digit can change what it reads as.
+
+Geometry and kinematics are imported from `octahedron.py` rather than restated:
+that module derives its orientation graph by rolling a real solid at import, and
+a second copy here could drift from the ground truth the dataset was generated
+against.
 
 ## Kinematics
 
