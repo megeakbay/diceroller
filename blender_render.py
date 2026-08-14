@@ -144,6 +144,11 @@ _OCT_BASIS_ELEVATION, OCT_AZIMUTH = _camera_from_basis(OCT_BASIS)
 # Still four visible faces: an octahedron is convex, so exactly half its faces
 # point away from any viewpoint. No angle shows more, and test_blender_scene.py
 # asserts the count rather than trusting this comment.
+#
+# Raising this further trades board legibility for face legibility: at 40-45
+# degrees the two faces angled away from the camera widen noticeably (they keep
+# only ~28% of their width at 26 degrees), at the cost of looking down on the
+# board rather than across it. `--elevation` overrides it per run.
 OCT_ELEVATION = 26.0
 
 
@@ -374,7 +379,11 @@ def setup_lighting(target: Sequence[float], azimuth: float,
     # Key: offset ~50 degrees from the camera azimuth, high and to one side.
     kaz = az + math.radians(50.0)
     key_data = bpy.data.lights.new("Key", type="AREA")
-    key_data.energy = 900.0 * scale * scale
+    # Sized so the brightest face stays inside the palette instead of blowing
+    # out. At 900 the face most squarely lit clipped to pure white -- measured
+    # on the octahedron's top face, which meets the key at 0.81 -- so the solid
+    # lost its cream body colour exactly where the number sits.
+    key_data.energy = 380.0 * scale * scale
     key_data.size = 9.0 * scale
     key_data.shape = "DISK"
     key = bpy.data.objects.new("Key", key_data)
@@ -399,7 +408,17 @@ def setup_lighting(target: Sequence[float], azimuth: float,
     # Rim: from behind, low, to put a bright edge on the solid's far side so it
     # separates from a white board at the silhouette.
     rim_data = bpy.data.lights.new("Rim", type="SUN")
-    rim_data.energy = 1.6
+    # Kept very low deliberately. A rim light is aimed back at the camera, so a
+    # face turned away from the viewer meets it almost head-on and blows out
+    # long before the faces the viewer is reading do. That is what left the
+    # octahedron's rear-upper face pure white, losing both its body colour and
+    # its number -- a face the task needs legible.
+    #
+    # Measured on that face: 1.6 clipped to 255,255,255 and stayed clipped even
+    # at 0.45; 0.30 reached 255,255,238; 0.20 held at 251,239,216. 0.15 keeps a
+    # margin below the clip while still parting the silhouette from the white
+    # board behind it.
+    rim_data.energy = 0.15
     rim_data.angle = math.radians(8.0)
     rim = bpy.data.objects.new("Rim", rim_data)
     rim.location = (target[0] - 12 * scale * math.cos(az),
@@ -735,33 +754,69 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 # between 37 and 60 degrees off level, which no choice of corner can fix.
 # ============================================================================
 
-# Seven-segment layout, as fractions of the tile. Each entry is a filled
-# rectangle (x0, y0, x1, y1). Drawing the digits from segments avoids depending
-# on a font being installed wherever this runs.
-_SEGMENTS = {
-    "a": (0.18, 0.80, 0.82, 0.95),   # top
-    "b": (0.70, 0.46, 0.85, 0.86),   # upper right
-    "c": (0.70, 0.10, 0.85, 0.50),   # lower right
-    "d": (0.18, 0.05, 0.82, 0.20),   # bottom
-    "e": (0.15, 0.10, 0.30, 0.50),   # lower left
-    "f": (0.15, 0.46, 0.30, 0.86),   # upper left
-    "g": (0.18, 0.43, 0.82, 0.57),   # middle
-}
-_DIGIT_SEGMENTS = {
-    0: "abcdef", 1: "bc", 2: "abdeg", 3: "abcdg", 4: "bcfg",
-    5: "acdfg", 6: "acdefg", 7: "abc", 8: "abcdefg", 9: "abcdfg",
+# Classic digit outlines, as stroke paths in a unit box.
+#
+# The digits were drawn as seven segments first, which reads as a calculator
+# display rather than as the numbering on a die. These are ordinary letterforms:
+# each entry is a list of polylines, and closed shapes repeat their first point.
+# Curves are approximated by enough points that they render smooth at the
+# texture sizes used here.
+def _arc(cx, cy, rx, ry, a0, a1, steps=16):
+    """Points along an ellipse arc, angles in degrees, counter-clockwise."""
+    out = []
+    for i in range(steps + 1):
+        t = math.radians(a0 + (a1 - a0) * i / steps)
+        out.append((cx + rx * math.cos(t), cy + ry * math.sin(t)))
+    return out
+
+
+_DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
+    0: [_arc(0.50, 0.50, 0.26, 0.42, 0, 360)],
+    1: [[(0.32, 0.74), (0.50, 0.92), (0.50, 0.08)],
+        [(0.30, 0.08), (0.70, 0.08)]],
+    2: [_arc(0.50, 0.68, 0.24, 0.24, 180, -20)
+        + [(0.24, 0.08), (0.76, 0.08)]],
+    3: [_arc(0.50, 0.71, 0.22, 0.21, 160, -90)
+        + _arc(0.50, 0.30, 0.25, 0.24, 90, -160)],
+    4: [[(0.66, 0.08), (0.66, 0.92), (0.20, 0.30), (0.80, 0.30)]],
+    5: [[(0.72, 0.92), (0.32, 0.92), (0.28, 0.55)]
+        + _arc(0.50, 0.32, 0.25, 0.24, 100, -150)],
+    6: [_arc(0.50, 0.30, 0.25, 0.25, 0, 360)
+        + [(0.75, 0.34), (0.66, 0.88)]],
+    7: [[(0.24, 0.92), (0.76, 0.92), (0.40, 0.08)]],
+    8: [_arc(0.50, 0.70, 0.21, 0.21, 0, 360),
+        _arc(0.50, 0.29, 0.25, 0.25, 0, 360)],
+    9: [_arc(0.50, 0.70, 0.25, 0.25, 0, 360)
+        + [(0.25, 0.66), (0.34, 0.12)]],
 }
 
 
 def _digit_pixels(value: int, size: int):
-    """Pixel offsets covering `value`, drawn as seven segments in a size box."""
-    out = []
-    for seg in _DIGIT_SEGMENTS.get(value, ""):
-        x0, y0, x1, y1 = _SEGMENTS[seg]
-        for y in range(int(y0 * size), int(y1 * size)):
-            for x in range(int(x0 * size), int(x1 * size)):
-                out.append((x, y))
-    return out
+    """
+    Pixel offsets covering `value`, drawn as stroked letterforms in a box.
+
+    The strokes are rasterised here rather than rendered from a font file, so
+    the result does not depend on which fonts happen to be installed where this
+    runs -- Blender's bundled font differs between builds and platforms.
+    """
+    width = max(1.0, size * 0.11)
+    half = width / 2.0
+    out = set()
+    for stroke in _DIGIT_STROKES.get(value, []):
+        for i in range(len(stroke) - 1):
+            ax, ay = stroke[i][0] * size, stroke[i][1] * size
+            bx, by = stroke[i + 1][0] * size, stroke[i + 1][1] * size
+            steps = max(2, int(math.hypot(bx - ax, by - ay)))
+            for s in range(steps + 1):
+                t = s / steps
+                px = ax + (bx - ax) * t
+                py = ay + (by - ay) * t
+                r = int(math.ceil(half))
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx * dx + dy * dy <= half * half:
+                            out.add((int(px) + dx, int(py) + dy))
+    return sorted(out)
 
 
 def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
@@ -797,7 +852,7 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # Drawn centred with a wide margin: the UV square fits the face's
         # projection, which is narrower than the tile on steeply angled faces,
         # so ink near a tile edge could fall outside the face.
-        inner = int(tile * 0.40)
+        inner = int(tile * 0.46)
         pad = (tile - inner) // 2
         for (dx, dy) in _digit_pixels(value, inner):
             x, y = cx + pad + dx, cy + pad + dy
@@ -821,7 +876,7 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
     set_input(bsdf, ("Coat Weight", "Clearcoat"), 0.35)
     tex = nodes.new("ShaderNodeTexImage")
     tex.image = img
-    tex.interpolation = "Closest"
+    tex.interpolation = "Linear"
     # Clip, so the area outside a face's UV square shows the tile's flat
     # background instead of repeating a neighbour's digit.
     tex.extension = "EXTEND"
@@ -893,11 +948,14 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         # it is foreshortened; it distorted the faces turned toward the camera
         # without fixing the level one, so the uniform scale stands.
         #
-        # The 1.55 factor maps the face onto a region larger than the tile. The
-        # digit occupies a fixed fraction of the tile, so overflowing is what
-        # keeps it small *within* the face; the ink stays centred, so the
-        # overflow only ever samples flat background.
-        fit = 1.55 / span
+        # The face must map *inside* its tile. An earlier version scaled it to
+        # 1.55x the tile so the digit would look small within the face, but that
+        # pushed the corners out to uv -0.39 and +1.31; with EXTEND sampling
+        # everything past the edge repeats the tile's border pixel, which is why
+        # whole faces came out flat white. Keeping the mapping inside the tile
+        # and shrinking the drawn glyph instead gives the same proportions with
+        # no sampling outside the tile at all.
+        fit = 1.30 / span
 
         for loop, (pu, pv) in zip(face.loops, pts):
             u = 0.5 + (pu - mid_u) * fit
@@ -1361,7 +1419,8 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
 
     # Camera before the solid: the face labels are rolled against the camera's
     # up axis so they read upright on screen, which needs the camera in place.
-    setup_camera(target, OCT_ELEVATION, OCT_AZIMUTH, ortho)
+    elevation = getattr(args, "elevation", None) or OCT_ELEVATION
+    setup_camera(target, elevation, OCT_AZIMUTH, ortho)
     build_octahedron(at, orientation, oct_)
     setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
     # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
@@ -1488,6 +1547,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                    help="Default: 1000 (cube) / 1500 (octahedron)")
     p.add_argument("--height", type=int, default=None,
                    help="Default: 1000 (cube) / 975 (octahedron)")
+    p.add_argument("--elevation", type=float, default=None,
+                   help="Octahedron camera height in degrees (default 26). "
+                        "Higher widens the faces angled away from the camera, "
+                        "at the cost of looking down on the board; 40-45 is "
+                        "the useful upper end.")
     p.add_argument("--samples", type=int, default=128,
                    help="Cycles samples; EEVEE uses a quarter of this")
     p.add_argument("--engine", choices=("cycles", "eevee"), default="cycles")
