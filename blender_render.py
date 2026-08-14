@@ -182,6 +182,11 @@ def view_direction() -> Tuple[float, float, float]:
     return (d.x, d.y, d.z)
 
 
+def elevation_used(args) -> float:
+    """The octahedron camera elevation this run is using."""
+    return getattr(args, "elevation", None) or OCT_ELEVATION
+
+
 def camera_frame() -> Tuple["Vector", "Vector"]:
     """
     The camera's right and up axes in world space.
@@ -572,28 +577,45 @@ def add_ribbon(name: str, points: Sequence[Sequence[float]], width: float,
         d.normalize()
         return Vector((-d.y, d.x, 0.0))
 
-    for i, p in enumerate(pts):
-        if i == 0:
-            n = perp(pts[0], pts[1])
-        elif i == len(pts) - 1:
-            n = perp(pts[-2], pts[-1])
-        else:
-            # Mitre: average the two edge normals and lengthen to keep the
-            # ribbon's width constant through the corner.
-            n0, n1 = perp(pts[i - 1], p), perp(p, pts[i + 1])
-            n = (n0 + n1)
-            if n.length < 1e-9:
-                n = n0
-            else:
-                n.normalize()
-                cosang = max(0.35, n.dot(n0))  # clamp so sharp turns stay sane
-                n = n / cosang
-        left.append(p + n * half)
-        right.append(p - n * half)
+    # One quad per segment, with a round joint filling each corner.
+    #
+    # A single mitred strip is tidier but fails on this lattice: its corner
+    # vertices are pushed out by 1/cos(half-angle), and the triangular grid
+    # turns 60 degrees at a time, so on a route that keeps turning the same way
+    # the strip inflates until it folds back through itself and the line reads
+    # as broken. Building each segment separately cannot fold, whatever the
+    # route does; the joints keep the corners from showing a notch.
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[Tuple[int, ...]] = []
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        n = perp(a, b)
+        if n.length < 1e-9:
+            continue
+        base = len(verts)
+        verts.extend([
+            (a.x + n.x * half, a.y + n.y * half, z),
+            (b.x + n.x * half, b.y + n.y * half, z),
+            (b.x - n.x * half, b.y - n.y * half, z),
+            (a.x - n.x * half, a.y - n.y * half, z),
+        ])
+        faces.append((base, base + 1, base + 2, base + 3))
 
-    verts = [(v.x, v.y, z) for v in left] + [(v.x, v.y, z) for v in right]
-    n = len(left)
-    faces = [(i, i + 1, n + i + 1, n + i) for i in range(n - 1)]
+    # Round each interior joint, so corners read as a continuous turn rather
+    # than as two strips meeting at a notch.
+    for i in range(1, len(pts) - 1):
+        p = pts[i]
+        base = len(verts)
+        steps = 10
+        verts.append((p.x, p.y, z))
+        for s in range(steps + 1):
+            t = 2.0 * math.pi * s / steps
+            verts.append((p.x + math.cos(t) * half, p.y + math.sin(t) * half, z))
+        for s in range(steps):
+            faces.append((base, base + 1 + s, base + 2 + s))
+
+    if not faces:
+        return None
     return new_mesh_object(name, verts, faces, material)
 
 
@@ -852,7 +874,12 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # Drawn centred with a wide margin: the UV square fits the face's
         # projection, which is narrower than the tile on steeply angled faces,
         # so ink near a tile edge could fall outside the face.
-        inner = int(tile * 0.46)
+        #
+        # This fraction is what sets the digit's size on the solid. Kept modest
+        # so a number sits within its face with clear space around it rather
+        # than crowding the edges, which on a triangular face makes it harder to
+        # tell which face a digit belongs to.
+        inner = int(tile * 0.34)
         pad = (tile - inner) // 2
         for (dx, dy) in _digit_pixels(value, inner):
             x, y = cx + pad + dx, cy + pad + dy
@@ -1338,22 +1365,48 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
         obj, {fi: slot for slot, fi in enumerate(sorted(face_values))},
         cols, rows)
 
-    # A small bevel rounds the edges so each catches a highlight. Unlike the
-    # cube this stays modest: eight triangles meet at six points, and a wide
-    # bevel pinches badly at those vertices.
+    # Rounded edges, as on the cube. The cube reads as a real object mostly
+    # because of this: a wide, many-segment bevel carries a moving highlight
+    # along every edge, which is what tells the eye the body is solid and
+    # moulded rather than a shaded polygon.
+    #
+    # The octahedron kept a much smaller bevel out of caution -- eight triangles
+    # meet at six points and a wide bevel pinches there -- but 0.018 was small
+    # enough that the edges caught no light at all, so the solid stayed flat
+    # while the cube next to it looked real. 0.032 is the widest that still
+    # clears those vertices.
     bevel = obj.modifiers.new("Bevel", "BEVEL")
-    bevel.width = 0.018
-    bevel.segments = 3
+    bevel.width = 0.032
+    bevel.segments = 6
     bevel.limit_method = "ANGLE"
     bevel.angle_limit = math.radians(20.0)
     bevel.harden_normals = True
+
+    # Smooth shading with an angle split, exactly as the cube does it: the
+    # bevel then reads as a rounded edge instead of a band of flat facets,
+    # while the faces themselves stay flat.
+    for poly in obj.data.polygons:
+        poly.use_smooth = True
+    if hasattr(obj.data, "use_auto_smooth"):        # Blender < 4.1
+        obj.data.use_auto_smooth = True
+        obj.data.auto_smooth_angle = math.radians(20.0)
+    else:                                            # Blender >= 4.1
+        ng = bpy.data.node_groups.get("Smooth by Angle")
+        if ng is not None:
+            smooth = obj.modifiers.new("SmoothByAngle", "NODES")
+            smooth.node_group = ng
 
     # Edges still get their own dark geometry on top of the bevel: adjacent
     # faces of an octahedron meet at a shallow angle, so lighting alone leaves
     # neighbouring faces nearly the same tone and their numbers appear to sit
     # on one continuous surface. The drawn edge is what keeps the faces
     # countable, which the task depends on.
-    edge_mat = make_material("oct_die_edge", rgba(DIE_EDGE), shadeless=True)
+    #
+    # They are lit rather than emissive now, and thinner. As flat black strokes
+    # they read as ink drawn over a photograph -- the one part of the solid that
+    # never responded to the light. A dark, lit material still separates the
+    # faces while sitting in the same scene as the body.
+    edge_mat = make_material("oct_die_edge", rgba(DIE_EDGE), roughness=0.5)
     seen = set()
     for f in oct_.FACES:
         for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
@@ -1364,12 +1417,14 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
             va, vb = Vector(verts[a]), Vector(verts[b])
             d = vb - va
             bpy.ops.mesh.primitive_cylinder_add(
-                radius=0.014, depth=d.length, location=tuple((va + vb) / 2.0),
-                vertices=8)
+                radius=0.009, depth=d.length, location=tuple((va + vb) / 2.0),
+                vertices=10)
             e = bpy.context.active_object
             e.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
             e.data.materials.clear()
             e.data.materials.append(edge_mat)
+            for poly in e.data.polygons:
+                poly.use_smooth = True
 
 
 def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
@@ -1387,13 +1442,21 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
 
     build_octahedron_board(board, oct_)
 
-    # Route: travelled solid, remainder dashed, both lifted above the board.
+    # Route: travelled solid, remainder dashed, lying on the board.
+    #
+    # It stays at board level and is instead composited over the solid further
+    # down, by rendering the two in separate passes. Lifting the route above the
+    # solid was tried first and does place it in front, but under a parallel
+    # projection height also slides a point across the screen -- 2.67 units at
+    # the height needed to clear the apex -- so the route no longer ran over the
+    # cells it names, and it covered the front face's number.
+    route_z = 0.02
     pts = [(t["cell"][0], t["cell"][1]) for t in trace]
     if step > 0:
-        draw_route(pts[:step + 1], PATH_BLACK, dashed=False, z=0.02,
+        draw_route(pts[:step + 1], PATH_BLACK, dashed=False, z=route_z,
                    width=0.10, name="oct_done")
     if step < len(pts) - 1:
-        draw_route(pts[step:], REMAINING_PATH, dashed=True, z=0.02,
+        draw_route(pts[step:], REMAINING_PATH, dashed=True, z=route_z,
                    width=0.10, name="oct_todo")
 
     # Mark the START cell. Marking the destination gives away half the answer:
@@ -1419,8 +1482,7 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
 
     # Camera before the solid: the face labels are rolled against the camera's
     # up axis so they read upright on screen, which needs the camera in place.
-    elevation = getattr(args, "elevation", None) or OCT_ELEVATION
-    setup_camera(target, elevation, OCT_AZIMUTH, ortho)
+    setup_camera(target, elevation_used(args), OCT_AZIMUTH, ortho)
     build_octahedron(at, orientation, oct_)
     setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
     # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
@@ -1428,8 +1490,71 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     setup_render(args.width or 1500, args.height or 975,
                  args.samples, args.engine, args.transparent)
 
-    bpy.context.scene.render.filepath = str(out_path)
+    # Two passes, composited: the scene as it stands, then the route alone drawn
+    # over it.
+    #
+    # The route lies on the board, which is where it belongs, but the solid
+    # stands more than a cell tall in this view -- so a route running toward the
+    # camera passes behind it and vanishes, and one puzzle's route read as
+    # scattered fragments. Raising the route instead was tried and fails
+    # differently: under a parallel projection height also shifts a point
+    # sideways, so it stopped lining up with its own cells and covered the front
+    # face's number.
+    #
+    # Compositing keeps the geometry honest and settles only the occlusion,
+    # which is the single thing that was wrong. It is what the 2D renderer did
+    # by giving the route a higher zorder than the die.
+    scene = bpy.context.scene
+    route_objects = [ob for ob in bpy.data.objects
+                     if ob.name.startswith(("oct_done", "oct_todo"))]
+
+    scene.render.filepath = str(out_path)
     bpy.ops.render.render(write_still=True)
+
+    if route_objects and not args.transparent:
+        base = bpy.data.images.load(str(out_path))
+        base_px = list(base.pixels)
+
+        hidden = []
+        for ob in bpy.data.objects:
+            if ob.type == "MESH" and ob not in route_objects and not ob.hide_render:
+                ob.hide_render = True
+                hidden.append(ob)
+        scene.render.film_transparent = True
+        scene.render.image_settings.color_mode = "RGBA"
+        overlay_path = str(Path(out_path).with_name("_route_pass.png"))
+        scene.render.filepath = overlay_path
+        bpy.ops.render.render(write_still=True)
+        for ob in hidden:
+            ob.hide_render = False
+
+        over = bpy.data.images.load(overlay_path)
+        over_px = list(over.pixels)
+        # Composite the route over the scene, but never over ink.
+        #
+        # The route has to win against the solid's body, or it breaks up where
+        # it passes behind it. It must not win against the numbers: those are
+        # the one thing the task asks the reader to recover, and a dash laid
+        # across a digit can turn an 8 into something else. Dark pixels in the
+        # base are the digits and the edges, so they are left alone -- the route
+        # then flows around a number rather than through it.
+        for i in range(0, min(len(base_px), len(over_px)), 4):
+            a = over_px[i + 3]
+            if a <= 0.0:
+                continue
+            if max(base_px[i], base_px[i + 1], base_px[i + 2]) < 0.10:
+                continue
+            for c in range(3):
+                base_px[i + c] = (over_px[i + c] * a
+                                  + base_px[i + c] * (1.0 - a))
+        base.pixels = base_px
+        base.filepath_raw = str(out_path)
+        base.file_format = "PNG"
+        base.save()
+        try:
+            os.remove(overlay_path)
+        except OSError:
+            pass
 
 
 # ============================================================================
