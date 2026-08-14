@@ -1,0 +1,24 @@
+A die sits on a grid board. Everything you need is described below in words; there is no picture.
+
+{board_description}
+
+You are told three sides of the die: the top, and the two sides facing you. The other three sides are not given, so you have to work them out and keep track of them as the die rolls.
+
+The die rolls in one of four directions: up-left, up-right, down-left, or down-right. These are the directions as they would look on a board drawn at an angle. The side faces are named the same way: the up-left side, the up-right side, the down-left side, and the down-right side. Rolling up-left tips the die onto its up-left side, and so on.
+
+Rules:
+1. The die is a standard die: the values on opposite faces always sum to 7 (1-6, 2-5, 3-4).
+2. Each step, the die tips over one edge into the next cell on the path. It does not slide or spin in place.
+3. Picture the die tipping over one edge, the way it would if you nudged it. Four of its sides take one step around in the direction of the roll:
+     the side facing the way it rolls  ->  becomes the bottom
+     the top                           ->  becomes the side it rolled toward
+     the bottom                        ->  becomes the trailing side
+     the trailing side                 ->  comes up and becomes the top
+4. The two sides facing sideways to the roll do not move at all.
+
+Task:
+{question}
+
+Output:
+Respond in JSON format as follows:
+{answer_format}

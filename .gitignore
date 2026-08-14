@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+.env.local
+
+# Generated data
+output/
+output_*/
+output.zip
+traces/
+dataset.jsonl
+*.jsonl
+tool_use_results.json
+*_results.json
+report.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store

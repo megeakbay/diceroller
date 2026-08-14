@@ -1,0 +1,23 @@
+Attached is an image of a die sitting on a grid board, drawn at an angle so you can see the board in 3D. The dashed teal square marks where the die started. The line drawn across the board is the path it rolls along, and the arrow shows which way it is going. Any solid black squares are walls the die cannot enter.
+<image initial.png>
+
+You can see three sides of the die: the top, and the two sides facing you. The other three sides are hidden, so you have to keep track of them in your head as the die rolls.
+
+Because the board is drawn at an angle, the die rolls diagonally on the screen: up-left, up-right, down-left, or down-right. Follow the drawn path to see which way it goes at each step.
+
+Rules:
+1. The die is a standard die: the values on opposite faces always sum to 7 (1-6, 2-5, 3-4).
+2. Each step, the die tips over one edge into the next cell on the path. It does not slide or spin in place.
+3. Picture the die tipping over one edge, the way it would if you nudged it. Four of its sides take one step around in the direction of the roll:
+     the side facing the way it rolls  ->  becomes the bottom
+     the top                           ->  becomes the side it rolled toward
+     the bottom                        ->  becomes the trailing side
+     the trailing side                 ->  comes up and becomes the top
+4. The two sides facing sideways to the roll do not move at all.
+
+Task:
+{question}
+
+Output:
+Respond in JSON format as follows:
+{answer_format}

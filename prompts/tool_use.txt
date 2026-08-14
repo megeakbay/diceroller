@@ -1,0 +1,38 @@
+Attached is an image of a die sitting on a grid board, drawn at an angle so you can see the board in 3D. The dashed teal square marks where the die started. The line drawn across the board is the path it rolls along, and the arrow shows which way it is going. Any solid black squares are walls the die cannot enter.
+<image initial.png>
+
+You can see three sides of the die: the top, and the two sides facing you. The other three sides are hidden.
+
+Because the board is drawn at an angle, the die rolls diagonally on the screen: up-left, up-right, down-left, or down-right. Follow the drawn path to see which way it goes at each step.
+
+Rules:
+1. The die is a standard die: the values on opposite faces always sum to 7 (1-6, 2-5, 3-4).
+2. Each step, the die tips over one edge into the next cell on the path. It does not slide or spin in place.
+3. Picture the die tipping over one edge, the way it would if you nudged it. Four of its sides take one step around in the direction of the roll:
+     the side facing the way it rolls  ->  becomes the bottom
+     the top                           ->  becomes the side it rolled toward
+     the bottom                        ->  becomes the trailing side
+     the trailing side                 ->  comes up and becomes the top
+4. The two sides facing sideways to the roll do not move at all.
+5. A roll that would leave the board or hit a black square is refused, and the die stays put.
+
+You have tools that roll the die for you, so you do not have to picture the
+rotations yourself. Work one step at a time:
+
+1. Look at the path in the image and see which way the next step goes —
+   up-left, up-right, down-left, or down-right.
+2. Call `roll_die` with that direction.
+3. Read what comes back before choosing the next step. It tells you the new
+   numbers on the die, and whether the roll worked.
+4. When you have rolled the whole path, answer the question.
+
+If a roll comes back refused, you have misread the path or the board. Call
+`observe` to look again, then pick a different direction — do not repeat the
+move that was refused.
+
+Task:
+{question}
+
+Output:
+When you have finished rolling, respond in JSON format as follows:
+{answer_format}

@@ -1,0 +1,107 @@
+[
+  {
+    "puzzle_id": 1,
+    "level": 5,
+    "variant": "octahedron",
+    "puzzle_dir": "output/octahedron/level_05/puzzle_0001",
+    "setting": "tool_use",
+    "model": "gemini-3.1-pro-preview",
+    "tool_calls": 7,
+    "rejected_moves": 0,
+    "final_text": ". Face on the board is indeed 1.\nEverything is verified.\nI will construct the final JSON answer now.\nJSON:\n```json\n{\"answer\": 1}\n```\n```json\n{\"answer\": 1}\n```",
+    "predicted": 1,
+    "expected": 7,
+    "reached_cell": [
+      -3.16,
+      0.84
+    ],
+    "true_final_cell": [
+      -2.79,
+      2.21
+    ]
+  },
+  {
+    "puzzle_id": 2,
+    "level": 5,
+    "variant": "octahedron",
+    "puzzle_dir": "output/octahedron/level_05/puzzle_0002",
+    "setting": "tool_use",
+    "model": "gemini-3.1-pro-preview",
+    "tool_calls": 4,
+    "rejected_moves": 0,
+    "final_text": "\u71c3\u70e7\u8def\u7ebf\u30aa\u30ec\u30f3\u30b8path\n\nWait, is that the end of the path?\nLet's check the original image to confirm the arrow head position relative to the die's starting position.\nStart cell: $C_0$ (DOWN). Center say at $(0,0)$.\nArrow head cell: $C_3'$ (UP).\nPath goes:\n- cross right / edge to $C_1$ (UP). Center is $(a/2, -h/3)$ relative to $C_0$? No, let's use a standard triangular grid coordinate system.\nLet grid lines be $y = n \\cdot h$, $y = \\sqrt{3} x + 2m \\cdot h$, $y = -\\sqrt{3} x + 2k \\cdot h$.\nLet $h$ be the height of a triangle.\nDOWN triangle $C_0$ has vertices $(0,0), (a,0), (a/2, -h)$.\nCenter is $(a/2, -h/3)$.\n$C_1$ (UP) shares the / edge from $(a,0)$ to $(a/2, -h)$.\nVertices of $C_1$: $(a,0), (a/2, -h), (3a/2, -h)$.\nCenter of $C_1$ is $(a, -2h/3)$.\n$C_2'$ (DOWN) shares the bottom edge of $C_1$, which is from $(a/2, -h)$ to $(3a/2, -h)$.\nWait. The horizontal edge of $C_1$ is its bottom edge, it's at $y=-h$.\nSo $C_2'$ has vertices $(a/2, -h), (3a/2, -h), (a, -2h)$.\nCenter of $C_2'$ is $(a, -4h/3)$.\n$C_3'$ (UP) shares the / edge of $C_2'$, which is from $(3a/2, -h)$ to $(a, -2h)$.\nVertices of $C_3'$: $(3a/2, -h), (a, -2h), (2a, -2h)$.\nCenter of $C_3'$ is $(3a/2, -5h/3)$.\nLet's look at the shape of the dashed line in the original image.\nIt starts at $C_0$ center $(a/2, -h/3)$.\nGoes to $C_1$ center $(a, -2h/3)$. (Move is $+a/2, -h/3$)\nGoes to $C_2'$ center $(a, -4h/3)$. (Move is $0, -2h/3$. This is purely vertical!)\nGoes to $C_3'$ center $(3a/2, -5h/3)$. (Move is $+a/2, -h/3$)\nLet's look at the drawing of the dashed line.\nThe segment from $C_1$ to $C_2'$ is perfectly vertical!\nYes, in the original image, the line going down is exactly parallel to the vertical axis of the octahedron.\nThis confirms the move is `down` crossing the horizontal edge.\nThe first segment and third segment are parallel to each other.\nYes, $(+a/2, -h/3)$ direction.\nThis confirms my move sequence: `down-right`, `down`, `down-right`.\nThe end cell is $C_3'$, and its face is 3.\n\nLet's double check everything.\nOriginal die state:\nTop = 3. Bottom = 6.\nFront-Center (DOWN-pointing) = 8.\nFront-Left (UP-pointing) = 5.\nFront-Right (UP-pointing) = 7.\nRoll 1: `down-right` from 6 (crossing the edge shared with 7).\nNew Bottom = 7.\nThe die rotated around edge (6,7).\nFace 7 is now flat on the board, pointing UP.\nFace 6 is adjacent to 7 on the Left edge.\nFace 4 is adjacent to 7 on the Right edge.\nFace 8 is adjacent to 7 on the Bottom edge.\nRoll 2: `down` from 7 (crossing the Bottom edge).\nNew Bottom = 8.\nThe die rotated around edge (7,8).\nFace 8 is now flat on the board, pointing DOWN.\nFace 7 is adjacent to 8 on the Top edge.\nFace 5 is adjacent to 8 on the Left edge.\nFace 3 is adjacent to 8 on the Right edge.\nRoll 3: `down-right` from 8 (crossing the Right edge).\nNew Bottom = 3.\nThis matches the API exactly!\nThe face on the board at the end of the path is 3.\n\nWait, is there any possibility the path is different?\nLet's look at the arrow head again in the original image.\nThe arrow head is an UP-pointing triangle.\nIt is exactly in the cell $C_3'$.\nLet's trace the path one more time on the image.\nStart: center of $C_0$.\nSegment 1: goes right and slightly down, crossing the / edge into $C_1$.\nSegment 2: goes straight down, crossing the horizontal edge into $C_2'$.\nSegment 3: goes right and slightly down, crossing the / edge into $C_3'$.\nEnds in $C_3'$.\nThe moves are exactly: `down-right`, `down`, `down-right`.\nThe bottom face lands on 3.\n\nLet's quickly re-verify my manual tracking of faces, just to be sure there isn't a chirality issue.\nStandard numbering: opp pairs sum to 9.\n(1,8), (2,7), (3,6), (4,5).\nInitial: B=6, T=3.\nAdj to B(6): 5, 7, 1. (These are the UP-pointing faces in the flat net)\nAdj to T(3): 8, 4, 2. (These are the DOWN-pointing faces)\nFrom the drawing:\n8 is Front-Center, adj to T(3).\n5 is Front-Left, adj to B(6).\n7 is Front-Right, adj to B(6).\nWe need to check the chirality of 5, 7, 1 around 6.\nLooking down from T(3) to B(6).\nThe edges of 6 are shared with 5, 7, 1.\nIf 5 is Front-Left and 7 is Front-Right, then 1 is Back.\nSequence of faces around 6 (counter-clockwise from above?): 5, 7, 1.\nLet's check the faces around T(3).\nEdges of 3 are shared with 8, 4, 2.\n8 is Front-Center.\nSince 5 (Front-Left) shares an edge with 8, and 7 (Front-Right) shares an edge with 8.\nThe vertices of 8 are between (5,7), (5, ?), (7, ?).\nActually, 8 is adjacent to 5, 7, 3.\nThis perfectly locks the relative positions of 3, 5, 7, 8.\nLet's trace the rolls using a physical model in mind.\nStart: 6 on table. 5 is Left-sloping, 7 is Right-sloping. 8 is Front-sloping (from Top).\nRoll Right (over 6-7 edge).\n7 is on table. 6 is now Left-sloping.\nWhere is 8? 8 was attached to the Front-Right of 6.\nNow 7 is on the table. The edge between 7 and 8 is...\nLet's look at the common vertex of 6, 7, 8.\nIn the starting position, 5 is FL, 7 is FR, 8 is FC.\n5 and 7 are attached to 6. 8 is attached to 5 and 7 (and 3).\nWait, 8 is adjacent to 3, 5, 7.\nSo 8 forms a \"cap\" over 5 and 7.\nThe vertex shared by 5, 7, 8 is a single vertex.\nLet's check this. 3 faces meet at a vertex in an octahedron?\nNo, 4 faces meet at a vertex.\nThe faces are: 8, 5, 6, 7?\nLet's check.\nN(8) = {3, 5, 7}.\nN(6) = {1, 5, 7}.\nSo 5 and 7 share an edge?\nWait, if N(8)={3,5,7} and N(6)={1,5,7}, then 5 and 7 both are adjacent to 8 and 6.\nDo 5 and 7 share an edge with each other?\nLet's check opposite pairs. (5,4) and (7,2).\nNeighbors of 5: 6, 8, 4? No, opposite can't be neighbor.\nLet's re-build the adjacency list.\nT=3, B=6.\nD_i adj to T. U_i adj to B.\n$D_1=8, U_1=5, U_2=7$.\n$D_1$ is adjacent to $T(3), U_1(5), U_2(7)$.\n$U_1(5)$ is adjacent to $B(6), D_1(8), D_3$.\n$U_2(7)$ is adjacent to $B(6), D_1(8), D_2$.\nThis means 5 and 7 do NOT share an edge.\nThey both share an edge with 8, and both share an edge with 6.\nThey meet at vertices!\nThe vertex shared by 6, 8, 5, x... wait.\nAt a vertex, 4 faces meet.\nLet's look at the vertex between $B, U_1, D_1$.\nFaces around it are $B, U_1, D_1, U_2$? No.\nEquatorial band is a zig-zag: $U_1 - D_1 - U_2 - D_2 - U_3 - D_3 - U_1$.\nEdges are:\n$U_1$ shares edge with $D_1$.\n$D_1$ shares edge with $U_2$.\n$U_2$ shares edge with $D_2$.\n$D_2$ shares edge with $U_3$.\n$U_3$ shares edge with $D_3$.\n$D_3$ shares edge with $U_1$.\nThis perfectly matches: $D_1(8)$ shares edges with $U_1(5)$ and $U_2(7)$.\nAnd $U_1(5), U_2(7)$ share edges with $B(6)$.\nSo the vertex shared by $B(6)$ and $D_1(8)$ is exactly the one between $U_1$ and $U_2$?\nNo, $B$ and $D_1$ don't share an edge, they share a VERTEX.\nThe faces meeting at this vertex are $B, U_1, D_1, U_2$.\nLet's verify this.\nFaces around a vertex alternate pointing up/down relative to the vertex.\n$B, U_1, D_1, U_2$ all meet at one vertex?\nLet's check the standard net.\nCentral vertex of the hexagram projection.\n6 faces meet at the central vertex in a 2D projection? No, it's a projection of an octahedron.\nLooking straight down at a vertex: 4 faces meet.\nYes, $B, U_1, D_1, U_2$ meeting at a vertex means 8 and 6 share a vertex.\nWait, if $B, U_1, D_1, U_2$ meet at a vertex, then $U_1, U_2$ must be adjacent to each other?\nNO. In a square (vertex figure of octahedron), opposite faces in the cycle don't share an edge.\nSo $U_1, U_2$ don't share an edge. $B, D_1$ don't share an edge.\nThis is exactly correct.\nSo the vertex is V_front.\nFaces meeting at V_front: 6(Bottom), 5(Front-Left), 8(Front-Center), 7(Front-Right).\nWait, if 8 is D_1, it slopes DOWN from Top.\n5 and 7 slope UP from Bottom.\nLet's check this in 3D.\nTop = $(1,1,1)$. Bottom = $(-1,-1,-1)$.\n8 = $(1,-1,1)$. 5 = $(1,-1,-1)$. 7 = $(-1,-1,1)$.\nDo they share a vertex?\nVertices of 8: $(1,0,0), (0,-1,0), (0,0,1)$.\nVertices of 6: $(-1,0,0), (0,-1,0), (0,0,-1)$.\nThey share $(0,-1,0)$! This is the \"Front\" vertex.\nFaces meeting at $(0,-1,0)$:\nAny face containing this vertex must have y=-1? No, faces don't have y=-1.\nFaces are planes $x \\pm y \\pm z = \\pm 1$.\nVertices are permutations of $(\\pm 1, 0, 0)$.\nSo $(0,-1,0)$ is a vertex.\nFaces containing $(0,-1,0)$:\n1) $x - y + z = 1$ -> $(1,-1,1)$ which is 8.\n2) $x - y - z = 1$ -> $(1,-1,-1)$ which is 5.\n3) $-x - y + z = 1$ -> $(-1,-1,1)$ which is 7.\n4) $-x - y - z = 1$ -> $(-1,-1,-1)$ which is 6.\nYES! 8, 5, 7, 6 meet at the Front vertex!\nThe cyclic order around this vertex is: 6, 5, 8, 7.\nLet's verify this order.\nEdge between 6 and 5: $(-1,0,0)-(0,-1,0)$? No.\n6 is $(-1,-1,-1)$, 5 is $(1,-1,-1)$.\nThey share vertices $(0,-1,0)$ and $(0,0,-1)$.\nSo the edge is between $(0,-1,0)$ and $(0,0,-1)$.\nEdge between 5 and 8: $(1,-1,-1)$ and $(1,-1,1)$.\nShare vertices $(1,0,0)$ and $(0,-1,0)$.\nSo the edge is between $(1,0,0)$ and $(0,-1,0)$.\nEdge between 8 and 7: $(1,-1,1)$ and $(-1,-1,1)$.\nShare vertices $(0,-1,0)$ and $(0,0,1)$.\nSo the edge is between $(0,-1,0)$ and $(0,0,1)$.\nEdge between 7 and 6: $(-1,-1,1)$ and $(-1,-1,-1)$.\nShare vertices $(-1,0,0)$ and $(0,-1,0)$.\nSo the edge is between $(-1,0,0)$ and $(0,-1,0)$.\nAll 4 edges meet at $(0,-1,0)$.\nThe order of edges around $(0,-1,0)$ is:\n$(0,0,-1) \\rightarrow (1,0,0) \\rightarrow (0,0,1) \\rightarrow (-1,0,0) \\rightarrow (0,0,-1)$.\nThis forms a square in the plane $y=0$ if we look from $(0,-1,0)$?\nYes, it's the equatorial square $x^2+z^2=1$.\nSo the cyclic order of faces is indeed 6-5-8-7.\nNow, let's track the rolls!\nInitial: 6 on table. Front vertex $(0,-1,0)$ is pointing \"down\" in the 2D projection?\nLet's check the drawing.\n6 is a DOWN-pointing triangle on the grid.\nThe vertex at the bottom of 6 is the shared vertex with 5, 8, 7?\nLet's see. In the 2D drawing, the bottom vertex of 6 is shared with the UP-pointing faces adjacent to it?\nNo.\nA DOWN-pointing triangle has its Top edge horizontal. Its Bottom is a vertex.\nThe faces attached to the Left and Right edges are 5 and 7.\nWait, 6 has edges Top, Left(\\), Right(/).\nIf 5 is on the Left edge and 7 is on the Right edge, they meet at the Bottom vertex!\nYes, the Left (\\) and Right (/) edges meet at the Bottom vertex.\nSo the Bottom vertex of 6 is exactly the Front vertex $(0,-1,0)$!\nThis means face 8 is attached to 5 and 7, and would be \"below\" this vertex if it were unfolded.\nIn the 3D view, 8 is sloping DOWN towards this vertex.\nThis perfectly matches the drawing! '8' is the central face pointing down to the bottom vertex.\nOkay, everything is perfectly consistent.\nNow let's trace the rolls with this solid geometric understanding.\nRoll 1: `down-right` from 6.\nWe roll over the Right (/) edge of 6. This is the edge between 6 and 7.\nThe die rotates around the edge (6,7).\nFace 7 is now flat on the board.\nSince we rolled from a DOWN-pointing cell to an UP-pointing cell, 7 is now an UP-pointing triangle.\nThe edge (6,7) was the Right edge of 6, so it's now the Left edge (/) of 7.\nThe bottom vertex of 7 is still the Front vertex $(0,-1,0)$!\nLet's verify this.\nThe edge (6,7) connects $(-1,0,0)$ and $(0,-1,0)$.\nWhen 7 is flat, this edge is on the left.\nThe other edges of 7 are (7,8) and (7,4).\nWhere are they?\nThe Front vertex $(0,-1,0)$ is shared by 6, 7, 8, 5.\nSince the edge (6,7) ends at this vertex, and is on the Left of 7, this vertex must be the BOTTOM vertex of 7.\nWait, 7 is an UP-pointing triangle.\nIts edges are Bottom(-), Left(/), Right(\\).\nThe Left and Right edges meet at the TOP vertex, not the bottom!\nLet me re-read the edges of an UP-pointing triangle.\n/\\\n--\nLeft edge goes from bottom-left to top.\nRight edge goes from bottom-right to top.\nBottom edge goes from bottom-left to bottom-right.\nSo the Left (/) and Right (\\) edges meet at the TOP vertex.\nThis means the Front vertex $(0,-1,0)$ is the TOP vertex of the new cell $C_1$!\nLet's check this.\nEdge (6,7) was Right (/) of $C_0$.\nIn $C_0$ (DOWN), Right edge is from top-right to bottom.\nSo the edge is (Top-Right, Bottom).\nWhen we roll over this edge into $C_1$ (UP).\nThe edge is now shared.\nFor $C_1$, this edge is Left (/).\nLeft edge of $C_1$ goes from bottom-left to top.\nSo the Bottom vertex of $C_0$ corresponds to the Top vertex of $C_1$!\nWait. Let's draw it.\nC0 (DOWN):\n  ----\n  \\  /\n   \\/\nLeft edge is \\. Right is /. Bottom is vertex V.\nC1 (UP) is attached to the / edge.\n   /\\\n  /  \\\n ----\nThe shared edge is the / edge.\nIn C0, it goes from top-right to V.\nIn C1, it goes from bottom-left to top-vertex.\nSo V (bottom of C0) must be the top-vertex of C1?\nLet's trace carefully.\nIf they share the / segment.\nThe lower end of the / segment is V.\nThe lower end of the / segment in C1 is its bottom-left vertex.\nAh!\nSo V is the bottom-left vertex of C1.\nLet's re-verify this.\nLet C0 vertices be $(0,h), (a,h), (a/2, 0)$. (Assuming $y$ goes up, $h$ is positive).\nV is $(a/2, 0)$.\nRight edge is from $(a,h)$ to $(a/2, 0)$.\nC1 is to the right. It must share this edge.\nVertices of C1: $(a/2, 0), (a, h), (3a/2, 0)$.\nYes! The shared edge is from $(a/2, 0)$ to $(a, h)$.\nFor C1, this is its Left edge.\nThe bottom-left vertex of C1 is $(a/2, 0)$, which is V!\nSo V = $(0,-1,0)$ is the bottom-left vertex of $C_1$.\nThe edges of 7 are:\nLeft (shared with 6): ends at V.\nBottom (horizontal): ends at V and bottom-right vertex.\nRight (shared with 4): ends at top vertex and bottom-right vertex.\nNow, which face is on the Bottom edge of $C_1$?\nThe faces meeting at V $(0,-1,0)$ are 6, 5, 8, 7.\nWe are now on 7.\nThe edges meeting at V are (7,6) [Left] and (7,8) [Bottom].\nLet's check this.\nIn the cyclic order 6-5-8-7.\n7 shares edges with 6 and 8 at this vertex.\nSo the Bottom edge MUST be (7,8)!\nThis perfectly confirms that rolling `down` (over the Bottom edge) goes to 8!\n\nRoll 2: `down` from 7 (crossing Bottom edge).\nWe roll over the (7,8) edge into $C_2'$ (DOWN).\nThe die rotates around (7,8).\nFace 8 is now flat on the board (DOWN-pointing).\nThe edge (7,8) was the Bottom horizontal edge of $C_1$.\nFor $C_2'$, it is the Top horizontal edge.\nLet's check the vertices of (7,8).\nIt is the Bottom edge of $C_1$: from $(a/2, 0)$ to $(3a/2, 0)$.\nThe left end is V $(0,-1,0)$.\nSo V is the top-left vertex of $C_2'$!\nEdges of 8:\nTop (shared with 7): from V to top-right vertex.\nLeft (shared with 5): from V to bottom vertex.\nRight (shared with 3): from top-right to bottom vertex.\nWait, let's verify the adjacencies of 8 at V.\nFaces around V are 6, 5, 8, 7.\n8 shares edges with 5 and 7 at V.\nThe Top edge is (8,7). It connects V to the top-right vertex.\nThe Left edge is (8,5). It connects V to the bottom vertex.\nSo rolling `left` from 8 would go to 5.\nWhat about the Right edge?\nWe know N(8) = {7, 5, 3}.\nSo the remaining edge MUST be (8,3)!\nThis is the Right edge (/) of $C_2'$.\nRoll 3 is `down-right`. This crosses the Right edge!\nSo we roll over the (8,3) edge.\nThe new face on the board is 3!\n\nEverything is perfectly consistent.\nThe geometric deduction is solid.\nThe manual tracking matches the API perfectly.\nThe path ends on face 3.\n\nLet's do a final review of the sequence just to be absolutely certain.\nPath:\n1. From start cell (face 6), cross right-leaning diagonal edge.\n   - Start cell is DOWN-pointing. Right edge is /.\n   - Direction is `down-right`.\n   - Adjacency: 6 shares / edge with 7. (Confirmed by initial drawing: 7 is Front-Right).\n   - Lands on 7.\n2. From second cell (face 7), cross bottom horizontal edge.\n   - Second cell is UP-pointing. Bottom edge is -.\n   - Direction is `down`.\n   - Adjacency: 7 shares - edge with 8. (Deduced from vertex sharing: 6,5,8,7 meet at the front vertex, so 7 and 8 share the edge meeting 7 and 6 at the bottom of the cell).\n   - Lands on 8.\n3. From third cell (face 8), cross right-leaning diagonal edge.\n   - Third cell is DOWN-pointing. Right edge is /.\n   - Direction is `down-right`.\n   - Adjacency: 8 shares / edge with 3. (Deduced from N(8)={5,7,3} and Left edge being 5).\n   - Lands on 3.\nFinal face is 3.\n\nNo doubts left. The logic holds up perfectly.\nThe final response should be `{\"answer\": 3}`.\nI've already used the API to independently verify all three steps and they all returned exactly what my model predicted.\nStep 1 API face: 7.\nStep 2 API face: 8.\nStep 3 API face: 3.\nFinal answer is 3.\nI will construct the JSON output.\n```json\n{\"answer\": 3}\n```",
+    "predicted": 3,
+    "expected": 5,
+    "reached_cell": [
+      -0.16,
+      -2.16
+    ],
+    "true_final_cell": [
+      1.21,
+      -1.79
+    ]
+  },
+  {
+    "puzzle_id": 3,
+    "level": 5,
+    "variant": "octahedron",
+    "puzzle_dir": "output/octahedron/level_05/puzzle_0003",
+    "setting": "tool_use",
+    "model": "gemini-3.1-pro-preview",
+    "tool_calls": 9,
+    "rejected_moves": 0,
+    "final_text": "-right}\nEverything is consistent.\nFace 1 is down.\n```json\n{\"answer\": 1}\n```",
+    "predicted": 1,
+    "expected": 5,
+    "reached_cell": [
+      2.58,
+      -1.42
+    ],
+    "true_final_cell": [
+      2.95,
+      -0.05
+    ]
+  },
+  {
+    "puzzle_id": 4,
+    "level": 5,
+    "variant": "octahedron",
+    "puzzle_dir": "output/octahedron/level_05/puzzle_0004",
+    "setting": "tool_use",
+    "model": "gemini-3.1-pro-preview",
+    "tool_calls": 6,
+    "rejected_moves": 0,
+    "final_text": " \n```json\n{\"answer\": 6}\n```",
+    "predicted": 6,
+    "expected": 1,
+    "reached_cell": [
+      -1.37,
+      -0.37
+    ],
+    "true_final_cell": [
+      -2.16,
+      -0.16
+    ]
+  },
+  {
+    "puzzle_id": 5,
+    "level": 5,
+    "variant": "octahedron",
+    "puzzle_dir": "output/octahedron/level_05/puzzle_0005",
+    "setting": "tool_use",
+    "model": "gemini-3.1-pro-preview",
+    "tool_calls": 6,
+    "rejected_moves": 0,
+    "final_text": "-images/content/cube_paths/923/8/4/6/7/6.png?response-content-disposition=attachment%3B%20filename%3D%22923.png%22&response-content-type=image%2Fpng&Expires=1718816969&Signature=I8H4q6N5X30wK9U02f741gC5a85-06sT3zG6B431O54A6zF1K7h4L1K78M0B57J3H-Y0A1t8y4-3w49w-rN6c4j8L-E6s5S79Z3G-X495H0hB2A8tH9U4R-wQ08-9Y7H290hI0yD-9sQ88849E-j3pQ3pB3C8M0b9L8j7H-95I66sJ5D9A9p4P3-O41F5uT13J1S8O4z-X7z47xP9A-M3P1x4T603K3a2V28y1G-N9B2mF0Z2nS6L7F76H1H0w4H425F-zU0yA-M9vG0h17B6R3A8H2m6Z5P__&Key-Pair-Id=K1G2G3G4G5G6G7)\n```json\n{\"answer\": 3}\n```",
+    "predicted": 3,
+    "expected": 3,
+    "reached_cell": [
+      1.21,
+      -1.79
+    ],
+    "true_final_cell": [
+      2.95,
+      -0.05
+    ]
+  }
+]

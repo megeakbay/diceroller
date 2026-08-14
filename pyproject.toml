@@ -1,0 +1,12 @@
+[project]
+name = "rolling-dice"
+version = "0.1.0"
+description = "Rolling Dice: a MIRA-style step-by-step dice-rolling reasoning dataset"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7",
+    "google-genai>=1.0",
+]
+
+[tool.uv]
+package = false
