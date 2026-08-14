@@ -148,6 +148,56 @@ fighting the tool: it reads the route off the picture wrongly. That makes this
 variant much harder than the cube's tool-use setting, where the rejection count
 is the interesting signal.
 
+## Blender renderer
+
+`blender_render.py` is a drop-in alternative to the matplotlib renderers. It
+reads the same `metadata.json` and writes the same `initial.png` /
+`cot_NN.png` filenames into the same puzzle directories, so the rollout
+scripts, the judges and `evaluate_responses.py` run against either renderer
+unchanged.
+
+```bash
+python render_blender.py --variant top --level 5 --limit 1
+python render_blender.py --puzzle output/octahedron/level_05/puzzle_0001
+python render_blender.py --variant top --suffix _blender   # write alongside
+```
+
+`render_blender.py` finds the Blender binary and shells out to it; set
+`BLENDER_PATH` or pass `--blender` if it is installed somewhere unusual. The
+renderer itself must run inside Blender:
+
+```bash
+blender --background --python blender_render.py -- --puzzle <dir>
+```
+
+The camera is not re-tuned by eye. A parallel projection collapses exactly the
+direction its matrix sends to zero, so the viewpoint each matplotlib basis
+implies is that matrix's null space — **29.5 degrees** of elevation for the
+cube and **16.86** for the octahedron, the latter matching the ~17 degrees the
+side-on view was chosen for above. `--check-angles` prints both and runs
+outside Blender.
+
+Three properties of the images are load-bearing for the benchmark, and the port
+keeps each one:
+
+- **Exactly three cube faces visible.** An orthographic camera on the board's
+  near corner gives this by construction; the 2D version got it by drawing only
+  three polygons, so a fourth face could have crept in through a drawing change.
+  Orthographic also matters on its own — under perspective the same face would
+  read differently depending on which cell the die stood on.
+- **Values stay readable.** Pips are spheres set into the faces and the
+  octahedron's numbers are extruded text, both rotated into their face's plane
+  so the lower faces do not render upside down.
+- **Travelled path solid, remainder dashed.** Dashes are walked along the whole
+  polyline rather than restarted per segment, so the rhythm stays continuous
+  through corners.
+
+Geometry and kinematics are imported from `octahedron.py` rather than restated:
+that module derives its orientation graph by rolling a real solid at import, and
+a second copy here could drift from the ground truth the dataset was generated
+against. `--engine eevee` trades some quality for speed; `--samples` sets the
+Cycles sample count.
+
 ## Kinematics
 
 The engine carries the die as an explicit six-face state; rolling permutes the
