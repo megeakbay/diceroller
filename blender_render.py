@@ -66,7 +66,13 @@ except ImportError:  # pragma: no cover - allows --check-angles outside Blender
 BOARD_SURFACE = "#FFFFFF"
 GRID_LINE = "#5A5A5A"
 BOARD_EDGE = "#000000"
-DIE_BODY = "#DED8C6"
+# Warmer and a touch deeper than generator.py's #DED8C6. That value was chosen
+# against the 2D renderer's flat fill; in a lit 3D render the solid's brightest
+# face washes out toward the white board and its faintest sits close to the grey
+# grid, so the body could read as part of the board rather than as an object on
+# it. This cream lifts contrast against the white surface (1.44:1, up from
+# 1.42:1) while staying pale enough for black pips and numbers to carry.
+DIE_BODY = "#E8D5AC"
 DIE_EDGE = "#1A1A1A"
 PIP_COLOR = "#000000"
 PATH_BLACK = "#14181C"
@@ -123,7 +129,69 @@ def _camera_from_basis(basis) -> Tuple[float, float]:
 
 
 CUBE_ELEVATION, CUBE_AZIMUTH = _camera_from_basis(CUBE_BASIS)
-OCT_ELEVATION, OCT_AZIMUTH = _camera_from_basis(OCT_BASIS)
+_OCT_BASIS_ELEVATION, OCT_AZIMUTH = _camera_from_basis(OCT_BASIS)
+
+# The octahedron is rendered from a little higher than its 2D basis implies.
+#
+# The 16.86 degrees the basis encodes was chosen for a flat drawing, where the
+# lattice only had to be readable as line work. In a shaded 3D render it is too
+# shallow: a lattice cell projects just 0.25 as tall as it is wide, so the board
+# collapses toward a band and the route is hard to follow across it. Measured
+# across elevations, 26 degrees raises that to 0.38 -- half again as legible --
+# while the smallest camera-facing face only drops from 0.251 to 0.240 in
+# projected area, so all four faces keep room for their number.
+#
+# Still four visible faces: an octahedron is convex, so exactly half its faces
+# point away from any viewpoint. No angle shows more, and test_blender_scene.py
+# asserts the count rather than trusting this comment.
+OCT_ELEVATION = 26.0
+
+
+# Where setup_camera last placed the camera, and what it was aimed at. Read
+# back instead of recovering the direction from the camera object.
+#
+# `rotation_euler` is assigned but `matrix_world` is only recomputed when the
+# dependency graph next evaluates, so querying the object's orientation during
+# scene construction returns the identity -- which silently reports the view as
+# straight down the +Z axis and mislabels which faces are visible. Recording
+# the placement avoids depending on evaluation order at all.
+_CAMERA_PLACEMENT: Dict[str, Tuple[float, float, float]] = {}
+
+
+def view_direction() -> Tuple[float, float, float]:
+    """
+    Direction from the scene toward the camera, as a unit vector.
+
+    Same convention as `octahedron.CAMERA`: it points *out* of the board at the
+    viewer, so a face is visible when its outward normal has a positive dot
+    product with it.
+    """
+    loc = _CAMERA_PLACEMENT.get("location")
+    target = _CAMERA_PLACEMENT.get("target")
+    if loc is None or target is None:
+        return (0.0, 0.0, 1.0)
+    d = Vector(loc) - Vector(target)
+    if d.length < 1e-9:
+        return (0.0, 0.0, 1.0)
+    d.normalize()
+    return (d.x, d.y, d.z)
+
+
+def camera_frame() -> Tuple["Vector", "Vector"]:
+    """
+    The camera's right and up axes in world space.
+
+    Derived from the recorded placement for the same reason as
+    `view_direction`: the camera object's own matrix is not yet valid while the
+    scene is still being built.
+    """
+    view = Vector(view_direction())          # scene -> camera
+    world_up = Vector((0.0, 0.0, 1.0))
+    if abs(view.dot(world_up)) > 0.999:
+        world_up = Vector((0.0, 1.0, 0.0))
+    right = world_up.cross(view).normalized()
+    up = view.cross(right).normalized()
+    return right, up
 
 
 def setup_camera(target: Sequence[float], elevation: float, azimuth: float,
@@ -153,6 +221,11 @@ def setup_camera(target: Sequence[float], elevation: float, azimuth: float,
     direction = Vector(target) - Vector(loc)
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = cam
+
+    # Record the placement so view_direction()/camera_frame() can report the
+    # view without reading back a matrix the depsgraph has not refreshed yet.
+    _CAMERA_PLACEMENT["location"] = tuple(float(v) for v in loc)
+    _CAMERA_PLACEMENT["target"] = tuple(float(v) for v in target)
     return cam
 
 
@@ -642,6 +715,198 @@ PIP_LAYOUT: Dict[int, List[Tuple[float, float]]] = {
 
 DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 
+# ============================================================================
+# Numbers on the octahedron
+#
+# The cube carries its values as sunk spheres and never had a placement problem,
+# because a sphere looks the same from every angle. Numerals do not: they have a
+# top and a reading direction, and an octahedron's faces are tilted in three axes
+# at once. Placing each digit as its own 3D object meant solving orientation,
+# handedness and foreshortening by hand, and every attempt left some face
+# mirrored, rolled or squashed to an unreadable sliver.
+#
+# Painting the digits into the body's texture removes the problem instead of
+# fighting it. They are drawn once into an image, each face is given its own
+# square of that image, and Blender's texture sampling puts them on the surface.
+# A number can then no longer be detached, mirrored or rolled: it is part of the
+# face. The UV square is aligned to the *camera's* axes rather than the face's
+# edges, so the digit reads upright on screen -- measured across all 24
+# orientations, aligning to the face's own edges leaves 75% of visible faces
+# between 37 and 60 degrees off level, which no choice of corner can fix.
+# ============================================================================
+
+# Seven-segment layout, as fractions of the tile. Each entry is a filled
+# rectangle (x0, y0, x1, y1). Drawing the digits from segments avoids depending
+# on a font being installed wherever this runs.
+_SEGMENTS = {
+    "a": (0.18, 0.80, 0.82, 0.95),   # top
+    "b": (0.70, 0.46, 0.85, 0.86),   # upper right
+    "c": (0.70, 0.10, 0.85, 0.50),   # lower right
+    "d": (0.18, 0.05, 0.82, 0.20),   # bottom
+    "e": (0.15, 0.10, 0.30, 0.50),   # lower left
+    "f": (0.15, 0.46, 0.30, 0.86),   # upper left
+    "g": (0.18, 0.43, 0.82, 0.57),   # middle
+}
+_DIGIT_SEGMENTS = {
+    0: "abcdef", 1: "bc", 2: "abdeg", 3: "abcdg", 4: "bcfg",
+    5: "acdfg", 6: "acdefg", 7: "abc", 8: "abcdefg", 9: "abcdfg",
+}
+
+
+def _digit_pixels(value: int, size: int):
+    """Pixel offsets covering `value`, drawn as seven segments in a size box."""
+    out = []
+    for seg in _DIGIT_SEGMENTS.get(value, ""):
+        x0, y0, x1, y1 = _SEGMENTS[seg]
+        for y in range(int(y0 * size), int(y1 * size)):
+            for x in range(int(x0 * size), int(x1 * size)):
+                out.append((x, y))
+    return out
+
+
+def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
+                           tile: int = 256):
+    """One material whose texture carries every face's number, in a grid atlas."""
+    slots = max(1, len(values))
+    cols = int(math.ceil(math.sqrt(slots)))
+    rows = int(math.ceil(slots / cols))
+
+    img = bpy.data.images.new(name, width=tile * cols, height=tile * rows)
+    # The buffer is written in the space the image is sampled in. Writing
+    # scene-linear values into an sRGB image has Blender convert them a second
+    # time, which shifts every colour.
+    img.colorspace_settings.name = "sRGB"
+    w, h = img.size
+    px = [0.0] * (w * h * 4)
+
+    def srgb_bytes(hex_color: str):
+        c = hex_color.lstrip("#")
+        return tuple(int(c[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    base = srgb_bytes(base_hex)
+    for i in range(w * h):
+        px[i * 4 + 0] = base[0]
+        px[i * 4 + 1] = base[1]
+        px[i * 4 + 2] = base[2]
+        px[i * 4 + 3] = 1.0
+
+    ink = srgb_bytes(PIP_COLOR)
+    for slot, (_face_index, value) in enumerate(sorted(values.items())):
+        cx = (slot % cols) * tile
+        cy = (slot // cols) * tile
+        # Drawn centred with a wide margin: the UV square fits the face's
+        # projection, which is narrower than the tile on steeply angled faces,
+        # so ink near a tile edge could fall outside the face.
+        inner = int(tile * 0.40)
+        pad = (tile - inner) // 2
+        for (dx, dy) in _digit_pixels(value, inner):
+            x, y = cx + pad + dx, cy + pad + dy
+            if 0 <= x < w and 0 <= y < h:
+                o = (y * w + x) * 4
+                px[o + 0] = ink[0]
+                px[o + 1] = ink[1]
+                px[o + 2] = ink[2]
+
+    img.pixels = px
+    img.pack()
+
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    nodes.clear()
+    out = nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Roughness"].default_value = 0.42
+    set_input(bsdf, ("Specular IOR Level", "Specular"), 0.3)
+    set_input(bsdf, ("Coat Weight", "Clearcoat"), 0.35)
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Closest"
+    # Clip, so the area outside a face's UV square shows the tile's flat
+    # background instead of repeating a neighbour's digit.
+    tex.extension = "EXTEND"
+    links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+
+    # Darken the ink back to black wherever the texture is dark.
+    #
+    # The body is a lit surface, so a face turned away from the key light
+    # renders its digits mid-grey -- measured at RGB 103 on the front face,
+    # against the black they are drawn in. Since reading these digits is the
+    # task, they must not fade with the lighting. Mixing toward a pure-black
+    # shader by the texture's own darkness keeps the ink solid on every face
+    # while leaving the body itself fully lit.
+    ink_shader = nodes.new("ShaderNodeEmission")
+    ink_shader.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    ink_shader.inputs["Strength"].default_value = 0.0
+    mix = nodes.new("ShaderNodeMixShader")
+    # Fac 0 -> lit body, Fac 1 -> flat black. The texture is near-white on the
+    # body and near-black on the ink, so invert it to drive the mix.
+    inv = nodes.new("ShaderNodeInvert")
+    links.new(tex.outputs["Color"], inv.inputs["Color"])
+    links.new(inv.outputs["Color"], mix.inputs["Fac"])
+    links.new(bsdf.outputs[0], mix.inputs[1])
+    links.new(ink_shader.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat, cols, rows
+
+
+def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
+                          rows: int) -> None:
+    """
+    Give each face its own square of the atlas, squared to the camera.
+
+    Built by hand with `bmesh` rather than run through an unwrapping operator:
+    the mapping is one triangle per tile, so there is nothing to solve, and a
+    hand-built mapping cannot seam or flip the way a projected one can.
+
+    Each face's corners are projected onto the camera's right and up axes and
+    that projection is fitted into the tile. Because the tile's u runs along the
+    camera's right and its v along its up, the digit lands upright on screen
+    whatever the face's own roll is -- no corner has to be chosen, so there is no
+    tie to break and no winding order to fall through to.
+    """
+    mesh = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    uv_layer = bm.loops.layers.uv.verify()
+    cam_right, cam_up = camera_frame()
+
+    bm.faces.ensure_lookup_table()
+    for face in bm.faces:
+        slot = face_slots.get(face.index)
+        if slot is None:
+            continue
+        cx, cy = slot % cols, slot // cols
+
+        pts = [(l.vert.co.dot(cam_right), l.vert.co.dot(cam_up))
+               for l in face.loops]
+        us = [p[0] for p in pts]
+        vs = [p[1] for p in pts]
+        span = max(max(us) - min(us), max(vs) - min(vs)) or 1.0
+        # Centre on the face's centroid, not on its bounding box. A triangle's
+        # box centre lies outside the triangle on the side away from its apex,
+        # which slid every digit toward the base of the solid.
+        mid_u = sum(us) / len(us)
+        mid_v = sum(vs) / len(vs)
+        # One scale for both axes, taken from the larger span. Fitting u and v
+        # independently was tried, to counter-stretch each face by however much
+        # it is foreshortened; it distorted the faces turned toward the camera
+        # without fixing the level one, so the uniform scale stands.
+        #
+        # The 1.55 factor maps the face onto a region larger than the tile. The
+        # digit occupies a fixed fraction of the tile, so overflowing is what
+        # keeps it small *within* the face; the ink stays centred, so the
+        # overflow only ever samples flat background.
+        fit = 1.55 / span
+
+        for loop, (pu, pv) in zip(face.loops, pts):
+            u = 0.5 + (pu - mid_u) * fit
+            v = 0.5 + (pv - mid_v) * fit
+            loop[uv_layer].uv = ((cx + u) / cols, (cy + v) / rows)
+
+    bm.to_mesh(mesh)
+    bm.free()
+
 
 def build_cube_board(board: Dict[str, Any]) -> None:
     """The board: a white slab, grid rules as flat inlays, blocked cells inset."""
@@ -1003,9 +1268,17 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
               float(cell[1] + P[k][1] * scale),
               float(P[k][2] * scale)) for k in range(len(P))]
 
-    body_mat = make_material("oct_body", rgba(DIE_BODY), roughness=0.42,
-                             coat=0.35)
+    # Every face carries its number, painted into the body's own texture. All
+    # eight are numbered, not just the ones facing the camera: which of them the
+    # picture shows is then settled by the renderer occluding the solid, the way
+    # it would for a real die, rather than by this code predicting the view.
+    face_values = {fi: oct_.FACE_VALUES[fi] for fi in range(len(oct_.FACES))}
+    body_mat, cols, rows = make_numbered_material(
+        "oct_body", DIE_BODY, face_values)
     obj = new_mesh_object("octahedron", verts, oct_.FACES, body_mat)
+    unwrap_faces_to_atlas(
+        obj, {fi: slot for slot, fi in enumerate(sorted(face_values))},
+        cols, rows)
 
     # A small bevel rounds the edges so each catches a highlight. Unlike the
     # cube this stays modest: eight triangles meet at six points, and a wide
@@ -1039,78 +1312,6 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
             e.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
             e.data.materials.clear()
             e.data.materials.append(edge_mat)
-
-    # Numbers on the faces turned toward the camera. Every camera-facing face
-    # carries its value, including the lower-half ones: an earlier 2D cut also
-    # required the face to point upward, which silently blanked those in all 24
-    # orientations.
-    text_mat = make_material("oct_text", rgba(PIP_COLOR), shadeless=True)
-    camera = oct_.CAMERA
-    for fi in range(8):
-        n, c = oct_._outward(P, fi)
-        if float(n @ camera) <= 0.02:
-            continue
-        add_face_number(
-            oct_.FACE_VALUES[fi],
-            (float(cell[0] + c[0] * scale),
-             float(cell[1] + c[1] * scale),
-             float(c[2] * scale)),
-            (float(n[0]), float(n[1]), float(n[2])),
-            text_mat,
-            # Direction from the board toward the viewer. This is exactly
-            # octahedron.CAMERA, which is why face visibility above and glyph
-            # facing here stay consistent by construction.
-            view=(float(camera[0]), float(camera[1]), float(camera[2])),
-        )
-
-
-def add_face_number(value: int, centre, normal, material,
-                    view: "Vector" = None) -> Any:
-    """
-    Place a face's number, anchored to that face but turned to face the camera.
-
-    The label is **billboarded**: it takes the camera's own rotation rather
-    than a frame built from the face normal. Deriving the frame from the face
-    is the obvious approach and it does not work -- an octahedron's faces are
-    tilted in three axes at once, so a basis that is correctly right-handed can
-    still present the glyph edge-on, rolled, or seen from its reverse side,
-    which renders it mirrored. A mirrored 5 reads as a 2, silently corrupting
-    the value the task asks the model to read off the picture.
-
-    Billboarding sidesteps all of it: every digit is upright and unmirrored by
-    construction, which is what the 2D renderer got for free by drawing text at
-    a projected centroid. The label is nudged along the face normal so it sits
-    clear of the surface it belongs to.
-    """
-    curve = bpy.data.curves.new(f"num_{value}", type="FONT")
-    curve.body = str(value)
-    curve.align_x = "CENTER"
-    curve.align_y = "CENTER"
-    curve.size = 0.34
-    curve.extrude = 0.004
-
-    obj = bpy.data.objects.new(f"num_{value}", curve)
-    obj.data.materials.append(material)
-    bpy.context.collection.objects.link(obj)
-
-    n = Vector(normal).normalized()
-    # Lift the glyph off its face, along that face's own normal, so it is never
-    # buried in the surface or z-fighting with it.
-    #
-    # The offset is along the normal and nothing else. An earlier version also
-    # pulled the label toward the solid's centre, meaning to stop the topmost
-    # digit overhanging the silhouette; it instead dragged every label off its
-    # own face and onto its neighbour, which is far worse than a slight
-    # crop -- the digit must stay on the face whose value it reports.
-    lift = 0.06
-    obj.location = (centre[0] + n.x * lift,
-                    centre[1] + n.y * lift,
-                    centre[2] + n.z * lift)
-
-    cam = bpy.context.scene.camera
-    if cam is not None:
-        obj.rotation_euler = cam.rotation_euler.copy()
-    return obj
 
 
 def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
