@@ -183,20 +183,59 @@ keeps each one:
 - **Exactly three cube faces visible.** An orthographic camera on the board's
   near corner gives this by construction; the 2D version got it by drawing only
   three polygons, so a fourth face could have crept in through a drawing change.
-  Orthographic also matters on its own — under perspective the same face would
-  read differently depending on which cell the die stood on.
-- **Values stay readable.** Pips are spheres set into the faces and the
+  The three are `top`, `south` and `west` — the same three
+  `generator._draw_die_on_cell` drew. Orthographic also matters on its own:
+  under perspective the same face would read differently depending on which cell
+  the die stood on.
+- **Values stay readable.** Pips are spheres sunk into the faces and the
   octahedron's numbers are extruded text, both rotated into their face's plane
   so the lower faces do not render upside down.
 - **Travelled path solid, remainder dashed.** Dashes are walked along the whole
   polyline rather than restarted per segment, so the rhythm stays continuous
   through corners.
 
+### What Blender is actually used for
+
+The point of the port is the shading, not the geometry — a literal translation
+of the 2D drawing would waste the renderer. What the 3D scene buys:
+
+- **Contact shadow.** An area key light casts a penumbral shadow that tightens
+  at the die's base, which is the strongest available cue that the solid stands
+  *on* the board rather than floating over it. The matplotlib version had none.
+- **Real edges.** A bevel with hardened normals catches a highlight along every
+  corner, so the three visible faces separate even where their tones are close.
+  The 2D renderer faked that separation with three hardcoded shade factors.
+- **Moulded pips.** Pips are sunk about 60% of their radius into each face, so
+  they catch a small shadow at the rim and read as moulded rather than printed
+  on.
+- **A clear coat** on the die body, giving the tight highlight of injection
+  plastic instead of a flat matte fill.
+- **A graded environment**, brighter overhead than at the horizon, so faces
+  angled differently pick up different ambient light even out of the key.
+
+Two things deliberately stay flat. Route lines, grid rules and the start marker
+are **emissive**: they annotate the scene rather than inhabit it, so they must
+read identically over the lit and shadowed halves of the board — a dimming rule
+would look like a change of meaning. And the view transform is forced to
+**Standard**, not Blender's default AgX, which would desaturate the palette and
+turn the white board grey.
+
+Routes are drawn as mitred flat ribbons rather than chains of cylinders: a tube
+notches at every corner and its silhouette narrows on turns, while a ribbon
+keeps one even, drawn weight from this camera.
+
 Geometry and kinematics are imported from `octahedron.py` rather than restated:
 that module derives its orientation graph by rolling a real solid at import, and
 a second copy here could drift from the ground truth the dataset was generated
 against. `--engine eevee` trades some quality for speed; `--samples` sets the
 Cycles sample count.
+
+`test_blender_scene.py` covers what only exists once a scene is built — the
+camera, the die geometry, and the three-visible-faces invariant:
+
+```bash
+blender --background --python test_blender_scene.py
+```
 
 ## Kinematics
 

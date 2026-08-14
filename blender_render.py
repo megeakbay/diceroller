@@ -166,14 +166,36 @@ def reset_scene() -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
+def set_input(shader, names, value) -> bool:
+    """
+    Set the first socket that exists from `names`.
+
+    Principled BSDF renamed several sockets in Blender 4.x ("Specular" became
+    "Specular IOR Level", clearcoat became "Coat Weight"). Probing by name keeps
+    one script working across versions instead of pinning it to one.
+    """
+    for n in names:
+        if n in shader.inputs:
+            shader.inputs[n].default_value = value
+            return True
+    return False
+
+
 def make_material(name: str, color, roughness: float = 0.55,
-                  shadeless: bool = False) -> Any:
+                  shadeless: bool = False, coat: float = 0.0,
+                  sheen: float = 0.0) -> Any:
     """
     A Principled BSDF material.
 
-    `shadeless` swaps in a pure emission shader, used for the path and the grid:
-    those are diagram marks rather than objects, and letting light fall on them
-    would make a route dim as it crossed the board's shaded side.
+    `shadeless` swaps in a pure emission shader, used for diagram marks -- the
+    grid rules and the start marker. Those denote rather than depict, and
+    letting light fall on them would make a rule dim as it crossed the board's
+    shaded side, reading as a change of meaning where none exists.
+
+    `coat` adds a thin clear layer, which is what makes the die body look like a
+    moulded object rather than flat-shaded paper: the coat carries a tight
+    highlight that moves across the three visible faces and separates them even
+    where the diffuse tones are close.
     """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -189,59 +211,111 @@ def make_material(name: str, color, roughness: float = 0.55,
         shader = nodes.new("ShaderNodeBsdfPrincipled")
         shader.inputs["Base Color"].default_value = color
         shader.inputs["Roughness"].default_value = roughness
-        # Metallic/specular left at defaults; a dataset die wants a matte read,
-        # not highlights that could be mistaken for pips.
-        if "Specular IOR Level" in shader.inputs:
-            shader.inputs["Specular IOR Level"].default_value = 0.25
-        elif "Specular" in shader.inputs:
-            shader.inputs["Specular"].default_value = 0.25
+        # Matte base: a dataset die wants an even read, not broad highlights
+        # that could be mistaken for pips.
+        set_input(shader, ("Specular IOR Level", "Specular"), 0.3)
+        if coat:
+            set_input(shader, ("Coat Weight", "Clearcoat"), coat)
+            set_input(shader, ("Coat Roughness", "Clearcoat Roughness"), 0.12)
+        if sheen:
+            set_input(shader, ("Sheen Weight", "Sheen"), sheen)
 
     links.new(shader.outputs[0], out.inputs["Surface"])
     return mat
 
 
 def setup_world(strength: float = 1.0) -> None:
-    """A plain white world, so the board's white surface stays white."""
+    """
+    A bright, slightly graded environment.
+
+    Pure uniform white lights every surface identically, which flattens the
+    solid -- the very cue the render exists to provide. A gradient that is
+    brighter overhead than at the horizon gives surfaces a direction-dependent
+    ambient term, so faces angled differently pick up different light even
+    where no lamp reaches them.
+    """
     world = bpy.data.worlds.new("World")
     bpy.context.scene.world = world
     world.use_nodes = True
-    bg = world.node_tree.nodes["Background"]
-    bg.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    nodes, links = world.node_tree.nodes, world.node_tree.links
+    nodes.clear()
+
+    out = nodes.new("ShaderNodeOutputWorld")
+    bg = nodes.new("ShaderNodeBackground")
     bg.inputs["Strength"].default_value = strength
 
+    # Sky-ish gradient driven by the z component of the view direction.
+    tex = nodes.new("ShaderNodeTexCoord")
+    sep = nodes.new("ShaderNodeSeparateXYZ")
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = (0.72, 0.74, 0.78, 1.0)
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
 
-def setup_lighting(target: Sequence[float], azimuth: float) -> None:
-    """
-    A key/fill pair placed relative to the camera.
+    links.new(tex.outputs["Generated"], sep.inputs["Vector"])
+    links.new(sep.outputs["Z"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], bg.inputs["Color"])
+    links.new(bg.outputs["Background"], out.inputs["Surface"])
 
-    The key sits off the camera's azimuth so the die's three visible faces pick
-    up distinct brightnesses -- that tonal separation is what makes the solid
-    read as a cube rather than a flat hexagon, and the 2D renderer faked it with
-    hardcoded shade factors.
+
+def setup_lighting(target: Sequence[float], azimuth: float,
+                   scale: float = 1.0) -> None:
     """
-    key_data = bpy.data.lights.new("Key", type="SUN")
-    key_data.energy = 3.0
-    key_data.angle = math.radians(12.0)
+    A three-point rig: area key, sun fill, and a low rim.
+
+    An AREA key rather than a bare sun, because area lights cast penumbral
+    shadows: the die's contact shadow softens with distance from the base, which
+    is the strongest available cue that the solid is standing *on* the board
+    rather than floating above it. The first port had no shadow at all and the
+    die read as pasted on.
+
+    The key sits off the camera's azimuth so the three visible faces pick up
+    distinct brightnesses -- that tonal separation is what makes the solid read
+    as a cube, and the 2D renderer had to fake it with hardcoded shade factors.
+    """
+    def aim(obj, at):
+        obj.rotation_euler = (
+            Vector(at) - Vector(obj.location)
+        ).to_track_quat("-Z", "Y").to_euler()
+
+    az = math.radians(azimuth)
+    # Key: offset ~50 degrees from the camera azimuth, high and to one side.
+    kaz = az + math.radians(50.0)
+    key_data = bpy.data.lights.new("Key", type="AREA")
+    key_data.energy = 900.0 * scale * scale
+    key_data.size = 9.0 * scale
+    key_data.shape = "DISK"
     key = bpy.data.objects.new("Key", key_data)
-    key.location = (target[0] + 12, target[1] + 6, target[2] + 18)
-    key.rotation_euler = (
-        Vector(target) - Vector(key.location)
-    ).to_track_quat("-Z", "Y").to_euler()
+    key.location = (target[0] + 11 * scale * math.cos(kaz),
+                    target[1] + 11 * scale * math.sin(kaz),
+                    target[2] + 15 * scale)
+    aim(key, target)
     bpy.context.collection.objects.link(key)
 
+    # Fill: broad and weak, from the camera side, to open the shadowed faces
+    # without erasing the tonal separation the key just created.
     fill_data = bpy.data.lights.new("Fill", type="SUN")
-    fill_data.energy = 1.4
+    fill_data.energy = 1.1
+    fill_data.angle = math.radians(30.0)
     fill = bpy.data.objects.new("Fill", fill_data)
-    az = math.radians(azimuth)
-    fill.location = (
-        target[0] + 16 * math.cos(az),
-        target[1] + 16 * math.sin(az),
-        target[2] + 8,
-    )
-    fill.rotation_euler = (
-        Vector(target) - Vector(fill.location)
-    ).to_track_quat("-Z", "Y").to_euler()
+    fill.location = (target[0] + 14 * scale * math.cos(az),
+                     target[1] + 14 * scale * math.sin(az),
+                     target[2] + 7 * scale)
+    aim(fill, target)
     bpy.context.collection.objects.link(fill)
+
+    # Rim: from behind, low, to put a bright edge on the solid's far side so it
+    # separates from a white board at the silhouette.
+    rim_data = bpy.data.lights.new("Rim", type="SUN")
+    rim_data.energy = 1.6
+    rim_data.angle = math.radians(8.0)
+    rim = bpy.data.objects.new("Rim", rim_data)
+    rim.location = (target[0] - 12 * scale * math.cos(az),
+                    target[1] - 12 * scale * math.sin(az),
+                    target[2] + 5 * scale)
+    aim(rim, target)
+    bpy.context.collection.objects.link(rim)
 
 
 def setup_render(width: int, height: int, samples: int, engine: str,
@@ -251,12 +325,32 @@ def setup_render(width: int, height: int, samples: int, engine: str,
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA" if transparent else "RGB"
     scene.render.film_transparent = transparent
+
+    # Colour management: 'Standard', not Blender's default filmic/AgX tone map.
+    # AgX deliberately desaturates and rolls off highlights for photographic
+    # look -- on a diagram it turns the white board a muddy grey and pulls the
+    # orange route toward brown, changing the very colours the palette fixed.
+    try:
+        scene.view_settings.view_transform = "Standard"
+    except TypeError:
+        pass
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
 
     if engine == "cycles":
         scene.render.engine = "CYCLES"
         scene.cycles.samples = samples
         scene.cycles.use_denoising = True
+        # Bright, low-variance scene: few bounces are needed, and capping them
+        # cuts render time sharply with no visible difference.
+        scene.cycles.max_bounces = 4
+        scene.cycles.diffuse_bounces = 3
+        scene.cycles.glossy_bounces = 2
+        scene.cycles.transmission_bounces = 2
+        scene.cycles.use_fast_gi = True
         # Prefer GPU when the build exposes one; falls back silently to CPU.
         try:
             prefs = bpy.context.preferences.addons["cycles"].preferences
@@ -275,8 +369,22 @@ def setup_render(width: int, height: int, samples: int, engine: str,
             except TypeError:
                 continue
         eevee = getattr(scene, "eevee", None)
-        if eevee is not None and hasattr(eevee, "taa_render_samples"):
-            eevee.taa_render_samples = max(16, samples // 4)
+        if eevee is not None:
+            if hasattr(eevee, "taa_render_samples"):
+                eevee.taa_render_samples = max(32, samples // 2)
+            # Soft shadows and ambient occlusion are what give EEVEE the
+            # contact cue Cycles gets from ray tracing. Names differ between
+            # EEVEE Legacy and EEVEE Next, so each is probed.
+            for attr, val in (("use_gtao", True), ("gtao_distance", 0.6),
+                              ("use_soft_shadows", True),
+                              ("use_shadow_jitter_viewport", True),
+                              ("shadow_ray_count", 2),
+                              ("shadow_step_count", 6)):
+                if hasattr(eevee, attr):
+                    try:
+                        setattr(eevee, attr, val)
+                    except (AttributeError, TypeError):
+                        pass
 
 
 # ============================================================================
@@ -291,52 +399,6 @@ def new_mesh_object(name: str, verts, faces, material) -> Any:
     obj = bpy.data.objects.new(name, mesh)
     obj.data.materials.append(material)
     bpy.context.collection.objects.link(obj)
-    return obj
-
-
-def add_tube(name: str, p0, p1, radius: float, material, z: float) -> Any:
-    """
-    A capsule-ended cylinder between two ground points, used for path segments
-    and grid rules.
-
-    Drawn as geometry rather than as a 2D stroke because a Blender scene has no
-    line primitive that survives an orthographic render at arbitrary
-    resolutions; a real tube also keeps its width consistent with the die.
-    """
-    a = Vector((p0[0], p0[1], z))
-    b = Vector((p1[0], p1[1], z))
-    d = b - a
-    length = d.length
-    if length < 1e-9:
-        return None
-
-    bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=length,
-                                        location=tuple((a + b) / 2.0), vertices=12)
-    obj = bpy.context.active_object
-    obj.name = name
-    obj.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
-    obj.data.materials.clear()
-    obj.data.materials.append(material)
-    return obj
-
-
-def add_cone(name: str, tip, direction, length: float, radius: float,
-             material, z: float) -> Any:
-    """An arrowhead: a cone whose tip sits at `tip`, pointing along `direction`."""
-    d = Vector((direction[0], direction[1], 0.0))
-    if d.length < 1e-9:
-        return None
-    d.normalize()
-    base = Vector((tip[0], tip[1], z)) - d * length
-    centre = base + d * (length / 2.0)
-
-    bpy.ops.mesh.primitive_cone_add(radius1=radius, radius2=0.0, depth=length,
-                                    location=tuple(centre), vertices=16)
-    obj = bpy.context.active_object
-    obj.name = name
-    obj.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
-    obj.data.materials.clear()
-    obj.data.materials.append(material)
     return obj
 
 
@@ -373,48 +435,106 @@ def dash_segments(points: Sequence[Sequence[float]], dash: float, gap: float):
     return out
 
 
-def draw_route(points: Sequence[Sequence[float]], color: str, dashed: bool,
-               z: float, width: float = 0.075, name: str = "route") -> None:
+def add_ribbon(name: str, points: Sequence[Sequence[float]], width: float,
+               material, z: float) -> Any:
     """
-    Draw a route as tubes plus a single arrowhead at its end.
+    A flat ribbon following a polyline, mitred at the corners.
+
+    This replaces a chain of cylinders. Cylinders were the literal translation
+    of a 2D stroke, but they notch visibly at every turn and need a sphere
+    patching each joint; a single mitred strip is one clean object, sits flush
+    on the board, and keeps a constant apparent width from this camera because
+    it is a flat surface rather than a tube whose silhouette narrows on turns.
+    """
+    pts = [Vector((p[0], p[1], 0.0)) for p in points]
+    if len(pts) < 2:
+        return None
+
+    half = width / 2.0
+    left: List[Vector] = []
+    right: List[Vector] = []
+
+    def perp(a: Vector, b: Vector) -> Vector:
+        d = (b - a)
+        d.z = 0.0
+        if d.length < 1e-9:
+            return Vector((0.0, 0.0, 0.0))
+        d.normalize()
+        return Vector((-d.y, d.x, 0.0))
+
+    for i, p in enumerate(pts):
+        if i == 0:
+            n = perp(pts[0], pts[1])
+        elif i == len(pts) - 1:
+            n = perp(pts[-2], pts[-1])
+        else:
+            # Mitre: average the two edge normals and lengthen to keep the
+            # ribbon's width constant through the corner.
+            n0, n1 = perp(pts[i - 1], p), perp(p, pts[i + 1])
+            n = (n0 + n1)
+            if n.length < 1e-9:
+                n = n0
+            else:
+                n.normalize()
+                cosang = max(0.35, n.dot(n0))  # clamp so sharp turns stay sane
+                n = n / cosang
+        left.append(p + n * half)
+        right.append(p - n * half)
+
+    verts = [(v.x, v.y, z) for v in left] + [(v.x, v.y, z) for v in right]
+    n = len(left)
+    faces = [(i, i + 1, n + i + 1, n + i) for i in range(n - 1)]
+    return new_mesh_object(name, verts, faces, material)
+
+
+def draw_route(points: Sequence[Sequence[float]], color: str, dashed: bool,
+               z: float, width: float = 0.14, name: str = "route") -> None:
+    """
+    Draw a route as flat ribbons capped with a single arrowhead.
 
     The line is pulled back from the tip so the head caps it instead of poking
-    through, matching the 2D renderer's `head_len` trim.
+    through, matching the 2D renderer's `head_len` trim. Route marks are
+    emissive: they annotate the scene rather than inhabit it, so they must read
+    identically over the lit and shadowed halves of the board.
     """
     if len(points) < 2:
         return
     mat = make_material(f"{name}_mat", rgba(color), shadeless=True)
 
     head_len = 0.30
-    head_radius = 0.16
+    head_width = 0.34
     x0, y0 = points[-2][0], points[-2][1]
     x1, y1 = points[-1][0], points[-1][1]
     dx, dy = x1 - x0, y1 - y0
     norm = math.hypot(dx, dy) or 1.0
     ux, uy = dx / norm, dy / norm
+    # Size the head against the final segment: a fixed head swallows a short
+    # step whole, and the octahedron lattice has two different step lengths.
+    head = min(head_len, norm * 0.45)
 
     # Shorten the last segment by the head length, so the shaft stops where the
-    # cone begins.
+    # arrowhead begins.
     trimmed = [tuple(p[:2]) for p in points[:-1]]
-    trimmed.append((x1 - ux * head_len, y1 - uy * head_len))
+    trimmed.append((x1 - ux * head, y1 - uy * head))
 
     if dashed:
         for i, (a, b) in enumerate(dash_segments(trimmed, dash=0.34, gap=0.22)):
-            add_tube(f"{name}_dash_{i}", a, b, width, mat, z)
+            add_ribbon(f"{name}_dash_{i}", [a, b], width, mat, z)
     else:
-        for i in range(len(trimmed) - 1):
-            add_tube(f"{name}_seg_{i}", trimmed[i], trimmed[i + 1], width, mat, z)
-            # A sphere at each interior joint, so corners do not show a notch
-            # where two cylinders meet at an angle.
-            if 0 < i + 1 < len(trimmed) - 1:
-                bpy.ops.mesh.primitive_uv_sphere_add(
-                    radius=width, location=(trimmed[i + 1][0], trimmed[i + 1][1], z),
-                    segments=12, ring_count=8)
-                joint = bpy.context.active_object
-                joint.data.materials.clear()
-                joint.data.materials.append(mat)
+        add_ribbon(f"{name}_shaft", trimmed, width, mat, z)
 
-    add_cone(f"{name}_head", (x1, y1), (ux, uy), head_len, head_radius, mat, z)
+    # Arrowhead as a flat triangle, matching the ribbon it caps.
+    tipx, tipy = x1, y1
+    bx, by = x1 - ux * head, y1 - uy * head
+    px, py = -uy, ux
+    new_mesh_object(
+        f"{name}_head",
+        [(tipx, tipy, z),
+         (bx + px * head_width / 2.0, by + py * head_width / 2.0, z),
+         (bx - px * head_width / 2.0, by - py * head_width / 2.0, z)],
+        [(0, 1, 2)],
+        mat,
+    )
 
 
 # ============================================================================
@@ -439,9 +559,13 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 def build_cube_board(board: Dict[str, Any]) -> None:
     """The board: a white slab, grid rules as thin tubes, blocked cells inset."""
     bw, bh = board["width"], board["height"]
-    thickness = 0.12
+    thickness = 0.18
 
-    surface_mat = make_material("board", rgba(BOARD_SURFACE), roughness=0.9)
+    # A slab with real thickness, not a plane: the visible side wall gives the
+    # board a physical presence and catches the key light at a different angle
+    # from the top, which reads as a solid object under the die.
+    surface_mat = make_material("board", rgba(BOARD_SURFACE), roughness=0.85,
+                                sheen=0.1)
     verts = [
         (0, 0, 0), (bw, 0, 0), (bw, bh, 0), (0, bh, 0),
         (0, 0, -thickness), (bw, 0, -thickness),
@@ -449,21 +573,27 @@ def build_cube_board(board: Dict[str, Any]) -> None:
     ]
     faces = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
              (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-    new_mesh_object("board", verts, faces, surface_mat)
+    slab = new_mesh_object("board", verts, faces, surface_mat)
+    slab_bevel = slab.modifiers.new("Bevel", "BEVEL")
+    slab_bevel.width = 0.02
+    slab_bevel.segments = 2
+    slab_bevel.limit_method = "ANGLE"
 
+    # Grid rules as flat inlays rather than tubes: a tube on a white board
+    # catches a highlight along its crown and reads heavier than intended, and
+    # its apparent width changes with the viewing angle. A flat strip lying on
+    # the surface keeps the even, drawn weight the 2D renderer had.
     grid_mat = make_material("grid", rgba(GRID_LINE), shadeless=True)
     for x in range(bw + 1):
-        add_tube(f"grid_x{x}", (x, 0), (x, bh), 0.012, grid_mat, 0.004)
+        add_ribbon(f"grid_x{x}", [(x, 0), (x, bh)], 0.022, grid_mat, 0.005)
     for y in range(bh + 1):
-        add_tube(f"grid_y{y}", (0, y), (bw, y), 0.012, grid_mat, 0.004)
+        add_ribbon(f"grid_y{y}", [(0, y), (bw, y)], 0.022, grid_mat, 0.005)
 
     # Outer border: heavier, and true black, so the board's extent is
     # unambiguous now that the surface matches the page.
     edge_mat = make_material("board_edge", rgba(BOARD_EDGE), shadeless=True)
-    corners = [(0, 0), (bw, 0), (bw, bh), (0, bh)]
-    for i in range(4):
-        add_tube(f"border_{i}", corners[i], corners[(i + 1) % 4],
-                 0.035, edge_mat, 0.006)
+    corners = [(0, 0), (bw, 0), (bw, bh), (0, bh), (0, 0)]
+    add_ribbon("border", corners, 0.06, edge_mat, 0.007)
 
     blocked_mat = make_material("blocked", rgba(BLOCKED), roughness=0.7)
     for cx, cy in board.get("blocked", []):
@@ -497,17 +627,41 @@ def build_die(position: Sequence[int], die: Dict[str, int]) -> Any:
     cube.name = "die"
 
     # Bevel the edges. A razor-sharp cube renders with aliased silhouettes and
-    # reads as a flat hexagon at this scale; a small bevel catches a highlight
-    # along each edge and separates the three visible faces.
+    # reads as a flat hexagon at this scale; a rounded edge catches a highlight
+    # along each corner and separates the three visible faces even where their
+    # diffuse tones are close. This is the single change that most makes the
+    # die look like an object rather than a shaded polygon.
     bevel = cube.modifiers.new("Bevel", "BEVEL")
-    bevel.width = 0.035
-    bevel.segments = 3
+    bevel.width = 0.045
+    bevel.segments = 6
     bevel.limit_method = "ANGLE"
+    bevel.angle_limit = math.radians(30.0)
+    bevel.harden_normals = True
 
-    body_mat = make_material("die_body", rgba(DIE_BODY), roughness=0.6)
+    # Smooth shading with an angle split, so the bevel reads as a rounded edge
+    # while the faces stay flat. Without this the bevel facets show as bands.
+    for poly in cube.data.polygons:
+        poly.use_smooth = True
+    if hasattr(cube.data, "use_auto_smooth"):       # Blender < 4.1
+        cube.data.use_auto_smooth = True
+        cube.data.auto_smooth_angle = math.radians(30.0)
+    else:                                            # Blender >= 4.1
+        smooth = cube.modifiers.new("SmoothByAngle", "NODES")
+        try:
+            ng = bpy.data.node_groups.get("Smooth by Angle")
+            if ng is None:
+                bpy.ops.object.modifier_remove(modifier=smooth.name)
+            else:
+                smooth.node_group = ng
+        except Exception:
+            pass
+
+    # A clear coat gives the body a moulded, injection-plastic read.
+    body_mat = make_material("die_body", rgba(DIE_BODY), roughness=0.42,
+                             coat=0.35)
     cube.data.materials.append(body_mat)
 
-    pip_mat = make_material("pip", rgba(PIP_COLOR), roughness=0.45)
+    pip_mat = make_material("pip", rgba(PIP_COLOR), roughness=0.35, coat=0.2)
     half = s / 2.0
     pip_radius = 0.075 * s
 
@@ -530,17 +684,21 @@ def build_die(position: Sequence[int], die: Dict[str, int]) -> Any:
             ly = origin[1] + u[1] * px + v[1] * py
             lz = origin[2] + u[2] * px + v[2] * py
             # Sink the sphere so only a shallow cap stands proud of the face.
-            depth = pip_radius * 0.55
+            # A pip that sits fully on the surface reads as a sticker; one sunk
+            # this far catches its own small shadow at the rim, which is what
+            # makes it look moulded into the body.
+            depth = pip_radius * 0.62
             loc = (cx + lx - normal[0] * depth,
                    cy + ly - normal[1] * depth,
                    cz + lz - normal[2] * depth)
             bpy.ops.mesh.primitive_uv_sphere_add(radius=pip_radius, location=loc,
-                                                 segments=16, ring_count=10)
+                                                 segments=24, ring_count=14)
             pip = bpy.context.active_object
             pip.name = f"pip_{value}_{i}"
             pip.data.materials.clear()
             pip.data.materials.append(pip_mat)
-            bpy.ops.object.shade_smooth()
+            for poly in pip.data.polygons:
+                poly.use_smooth = True
 
     return cube
 
@@ -611,11 +769,9 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
     marker_mat = make_material("start_marker", rgba(REMAINING_PATH), shadeless=True)
     sx, sy = start[0], start[1]
     mc = [(sx + 0.06, sy + 0.06), (sx + 0.94, sy + 0.06),
-          (sx + 0.94, sy + 0.94), (sx + 0.06, sy + 0.94)]
-    for i in range(4):
-        for j, (a, b) in enumerate(dash_segments([mc[i], mc[(i + 1) % 4]],
-                                                 dash=0.16, gap=0.11)):
-            add_tube(f"marker_{i}_{j}", a, b, 0.028, marker_mat, 0.012)
+          (sx + 0.94, sy + 0.94), (sx + 0.06, sy + 0.94), (sx + 0.06, sy + 0.06)]
+    for j, (a, b) in enumerate(dash_segments(mc, dash=0.16, gap=0.11)):
+        add_ribbon(f"marker_{j}", [a, b], 0.05, marker_mat, 0.012)
 
     build_die(entry["position"], entry["die"])
 
@@ -623,9 +779,9 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
     # Fit the board's diagonal, plus room for a die standing at a far corner.
     ortho = math.hypot(bw, bh) * 0.80 + 1.2
     setup_camera(target, CUBE_ELEVATION, CUBE_AZIMUTH, ortho)
-    setup_lighting(target, CUBE_AZIMUTH)
-    setup_render(args.width, args.height, args.samples, args.engine,
-                 args.transparent)
+    setup_lighting(target, CUBE_AZIMUTH, scale=max(1.0, max(bw, bh) / 6.0))
+    setup_render(args.width or 1000, args.height or 1000,
+                 args.samples, args.engine, args.transparent)
 
     bpy.context.scene.render.filepath = str(out_path)
     bpy.ops.render.render(write_still=True)
@@ -652,32 +808,44 @@ def load_octahedron_module():
 
 def build_octahedron_board(board, oct_) -> None:
     """Triangular lattice cells as flat polygons, with a heavy hull border."""
-    surface_mat = make_material("oct_board", rgba(BOARD_SURFACE), roughness=0.9)
+    surface_mat = make_material("oct_board", rgba(BOARD_SURFACE), roughness=0.85,
+                                sheen=0.1)
     grid_mat = make_material("oct_grid", rgba(GRID_LINE), shadeless=True)
 
     all_pts = []
+    cells_pts = []
     for key, cell in board.items():
         poly = oct_.cell_polygon(cell)
         pts = [(float(px), float(py)) for px, py in poly]
         all_pts.extend(pts)
+        cells_pts.append(pts)
         new_mesh_object(
             f"cell_{key[0]}_{key[1]}",
             [(px, py, 0.0) for px, py in pts],
             [(0, 1, 2)],
             surface_mat,
         )
+
+    # Lattice rules as flat inlays, one ribbon per shared edge. Deduplicated:
+    # every interior edge belongs to two triangles, and drawing it twice
+    # doubles its apparent weight against the single-drawn boundary edges.
+    seen = set()
+    for pts in cells_pts:
         for i in range(3):
-            add_tube(f"rule_{key[0]}_{key[1]}_{i}", pts[i], pts[(i + 1) % 3],
-                     0.012, grid_mat, 0.004)
+            a, b = pts[i], pts[(i + 1) % 3]
+            key = tuple(sorted((tuple(round(c, 4) for c in a),
+                                tuple(round(c, 4) for c in b))))
+            if key in seen:
+                continue
+            seen.add(key)
+            add_ribbon(f"rule_{len(seen)}", [a, b], 0.022, grid_mat, 0.005)
 
     # Border: the convex hull of the cells, matching the 2D renderer. The kept
     # region's true boundary zigzags, and tracing it exactly puts heavy black
     # lines through the middle of the board.
     edge_mat = make_material("oct_edge", rgba(BOARD_EDGE), shadeless=True)
     hull = convex_hull(all_pts)
-    for i in range(len(hull)):
-        add_tube(f"oct_border_{i}", hull[i], hull[(i + 1) % len(hull)],
-                 0.035, edge_mat, 0.006)
+    add_ribbon("oct_border", list(hull) + [hull[0]], 0.06, edge_mat, 0.007)
 
 
 def convex_hull(points):
@@ -721,12 +889,25 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
               float(cell[1] + P[k][1] * scale),
               float(P[k][2] * scale)) for k in range(len(P))]
 
-    body_mat = make_material("oct_body", rgba(DIE_BODY), roughness=0.6)
+    body_mat = make_material("oct_body", rgba(DIE_BODY), roughness=0.42,
+                             coat=0.35)
     obj = new_mesh_object("octahedron", verts, oct_.FACES, body_mat)
 
-    # Edges as their own dark geometry: a bevel on eight triangles meeting at
-    # six points pinches badly, and the faces need a hard line between them or
-    # adjacent numbers appear to sit on one surface.
+    # A small bevel rounds the edges so each catches a highlight. Unlike the
+    # cube this stays modest: eight triangles meet at six points, and a wide
+    # bevel pinches badly at those vertices.
+    bevel = obj.modifiers.new("Bevel", "BEVEL")
+    bevel.width = 0.018
+    bevel.segments = 3
+    bevel.limit_method = "ANGLE"
+    bevel.angle_limit = math.radians(20.0)
+    bevel.harden_normals = True
+
+    # Edges still get their own dark geometry on top of the bevel: adjacent
+    # faces of an octahedron meet at a shallow angle, so lighting alone leaves
+    # neighbouring faces nearly the same tone and their numbers appear to sit
+    # on one continuous surface. The drawn edge is what keeps the faces
+    # countable, which the task depends on.
     edge_mat = make_material("oct_die_edge", rgba(DIE_EDGE), shadeless=True)
     seen = set()
     for f in oct_.FACES:
@@ -738,7 +919,7 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
             va, vb = Vector(verts[a]), Vector(verts[b])
             d = vb - va
             bpy.ops.mesh.primitive_cylinder_add(
-                radius=0.016, depth=d.length, location=tuple((va + vb) / 2.0),
+                radius=0.014, depth=d.length, location=tuple((va + vb) / 2.0),
                 vertices=8)
             e = bpy.context.active_object
             e.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
@@ -818,10 +999,10 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     pts = [(t["cell"][0], t["cell"][1]) for t in trace]
     if step > 0:
         draw_route(pts[:step + 1], PATH_BLACK, dashed=False, z=0.02,
-                   width=0.055, name="oct_done")
+                   width=0.10, name="oct_done")
     if step < len(pts) - 1:
         draw_route(pts[step:], REMAINING_PATH, dashed=True, z=0.02,
-                   width=0.055, name="oct_todo")
+                   width=0.10, name="oct_todo")
 
     # Mark the START cell. Marking the destination gives away half the answer:
     # the route already ends there.
@@ -829,10 +1010,9 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     key = (round(trace[0]["cell"][0], 2), round(trace[0]["cell"][1], 2))
     if key in board:
         poly = [(float(px), float(py)) for px, py in oct_.cell_polygon(board[key])]
-        for i in range(3):
-            for j, (a, b) in enumerate(
-                    dash_segments([poly[i], poly[(i + 1) % 3]], dash=0.16, gap=0.11)):
-                add_tube(f"oct_marker_{i}_{j}", a, b, 0.026, marker_mat, 0.014)
+        for j, (a, b) in enumerate(
+                dash_segments(poly + [poly[0]], dash=0.16, gap=0.11)):
+            add_ribbon(f"oct_marker_{j}", [a, b], 0.048, marker_mat, 0.014)
 
     build_octahedron(at, orientation, oct_)
 
@@ -842,9 +1022,11 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     ortho = max(max(xs) - min(xs), 3.0) * 1.30 + 1.5
 
     setup_camera(target, OCT_ELEVATION, OCT_AZIMUTH, ortho)
-    setup_lighting(target, OCT_AZIMUTH)
-    setup_render(args.width, args.height, args.samples, args.engine,
-                 args.transparent)
+    setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
+    # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
+    # the 2D renderer used.
+    setup_render(args.width or 1500, args.height or 975,
+                 args.samples, args.engine, args.transparent)
 
     bpy.context.scene.render.filepath = str(out_path)
     bpy.ops.render.render(write_still=True)
@@ -949,8 +1131,13 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--suffix", type=str, default=None,
                    help="Append to filenames, e.g. _blender, to write "
                         "alongside the matplotlib renders instead of over them")
-    p.add_argument("--width", type=int, default=1000)
-    p.add_argument("--height", type=int, default=1000)
+    # Left unset by default so each variant gets the aspect its 2D renderer
+    # used: the cube board is square, while the octahedron's cropped lattice is
+    # a wide band and squeezing it into a square wastes most of the frame.
+    p.add_argument("--width", type=int, default=None,
+                   help="Default: 1000 (cube) / 1500 (octahedron)")
+    p.add_argument("--height", type=int, default=None,
+                   help="Default: 1000 (cube) / 975 (octahedron)")
     p.add_argument("--samples", type=int, default=128,
                    help="Cycles samples; EEVEE uses a quarter of this")
     p.add_argument("--engine", choices=("cycles", "eevee"), default="cycles")
