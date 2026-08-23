@@ -1591,76 +1591,25 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     # Compositing keeps the geometry honest and settles only the occlusion,
     # which is the single thing that was wrong. It is what the 2D renderer did
     # by giving the route a higher zorder than the die.
-    # Only the part of the route that the solid actually hides is composited.
+    # The route is left where it lies, and the renderer decides what the solid
+    # hides. No compositing pass.
     #
-    # Painting the whole route over the scene fixes the disappearing run but
-    # creates a worse problem: on frames where the route passes *in front* of
-    # the solid there was nothing to fix, and the overlay then draws an arrow
-    # straight across the body, which reads as the route going through the die.
+    # Two attempts to force the route in front of the body were tried and both
+    # were worse than the problem. Painting the whole route over the scene drew
+    # arrows straight across the faces -- the exact "route runs through the die"
+    # reading. Restricting it by depth did not help either: the body is about
+    # 1.8 units deep along the view, so pieces that the camera can see perfectly
+    # well still count as "behind" its centre, and those were the ones landing
+    # on a face's number. Adding a screen-overlap test narrowed it but not
+    # enough, because a route passing the solid genuinely does overlap its
+    # silhouette.
     #
-    # A route point is behind the solid when it is further from the camera than
-    # the body is, so only points beyond that depth need lifting over it.
+    # Rendered plainly, what the solid hides is a short piece of one arrow near
+    # its base, and the route stays readable across every frame -- while the
+    # numbers, which are what the task asks a model to read, are never crossed.
     scene = bpy.context.scene
-    route_objects = [ob for ob in bpy.data.objects
-                     if ob.name.startswith(("oct_done", "oct_todo"))]
-
-    view = Vector(view_direction())          # board -> camera
-    solid_depth = Vector((at[0], at[1], 0.0)).dot(view)
-    behind = [p for p in pts if Vector((p[0], p[1], 0.0)).dot(view) < solid_depth]
-    route_hidden = len(behind) > 0
-
     scene.render.filepath = str(out_path)
     bpy.ops.render.render(write_still=True)
-
-    if route_objects and route_hidden and not args.transparent:
-        base = bpy.data.images.load(str(out_path))
-        base_px = list(base.pixels)
-
-        hidden = []
-        for ob in bpy.data.objects:
-            if ob.type == "MESH" and ob not in route_objects and not ob.hide_render:
-                ob.hide_render = True
-                hidden.append(ob)
-        scene.render.film_transparent = True
-        scene.render.image_settings.color_mode = "RGBA"
-        overlay_path = str(Path(out_path).with_name("_route_pass.png"))
-        scene.render.filepath = overlay_path
-        bpy.ops.render.render(write_still=True)
-        for ob in hidden:
-            ob.hide_render = False
-
-        over = bpy.data.images.load(overlay_path)
-        over_px = list(over.pixels)
-        # Composite the route over the scene, but never over ink.
-        #
-        # The route has to win against the solid's body, or it breaks up where
-        # it passes behind it. It must not win against the numbers: those are
-        # the one thing the task asks the reader to recover, and a dash laid
-        # across a digit can turn an 8 into something else. Dark pixels in the
-        # base are the digits and the edges, so they are left alone -- the route
-        # then flows around a number rather than through it.
-        for i in range(0, min(len(base_px), len(over_px)), 4):
-            a = over_px[i + 3]
-            if a <= 0.0:
-                continue
-            if max(base_px[i], base_px[i + 1], base_px[i + 2]) < 0.10:
-                continue
-            for c in range(3):
-                base_px[i + c] = (over_px[i + c] * a
-                                  + base_px[i + c] * (1.0 - a))
-        base.pixels = base_px
-        base.filepath_raw = str(out_path)
-        base.file_format = "PNG"
-        base.save()
-        try:
-            os.remove(overlay_path)
-        except OSError:
-            pass
-
-
-# ============================================================================
-# Driving the render
-# ============================================================================
 
 
 def render_puzzle(puzzle_dir: Path, args: argparse.Namespace) -> int:

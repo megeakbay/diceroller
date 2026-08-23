@@ -307,24 +307,25 @@ corner. A single mitred strip is tidier but pushes its corner vertices out by
 a route that keeps turning the same way inflates until it folds through itself
 and reads as broken.
 
-On the octahedron the route is rendered as a **second pass and composited over
-the scene**, but only on frames where the solid actually hides part of it — a
-route point is behind the solid when it is further from the camera than the
-body. Compositing unconditionally fixes the disappearing run and then creates a
-worse problem: on frames where the route passes in front there was nothing to
-fix, and the overlay draws an arrow straight across the body, which reads as
-the route going through the die. The solid stands more than a cell tall in this view, so a route
-running toward the camera passes behind it and disappears — routes running away
-from the camera were fine, which is why only some puzzles looked broken.
-Raising the route in 3D was tried and fails differently: under a parallel
-projection height also shifts a point sideways, measured at 2.67 units for the
-height needed to clear the apex, so it no longer lined up with the cells it
-names. Compositing settles the occlusion and nothing else, which is what the 2D
-renderer did by giving the route a higher zorder than the die.
+On the octahedron the route is simply left where it lies, and the renderer
+decides what the solid hides. Three ways of forcing it in front were tried and
+all were worse than the problem:
 
-The composite deliberately does not paint over dark pixels. The route must win
-against the body or it breaks up; it must not win against the numbers, since a
-dash laid across a digit can change what it reads as.
+- Raising the route in 3D places it in front, but under a parallel projection
+  height also shifts a point sideways — measured at 2.67 units for the height
+  needed to clear the apex — so it no longer lined up with the cells it names.
+- Compositing the whole route over the scene draws arrows straight across the
+  faces, which is exactly the "route runs through the die" reading it was meant
+  to avoid.
+- Compositing only the pieces behind the body does not narrow it enough. The
+  solid is about 1.8 units deep along the view, so pieces the camera can see
+  perfectly well still count as behind its centre, and those were the ones
+  landing on a face's number. Adding a screen-overlap test still failed,
+  because a route passing the solid genuinely does overlap its silhouette.
+
+Rendered plainly, what the solid hides is a short piece of one arrow near its
+base. The route stays readable across every frame, and the numbers — which are
+what the task asks a model to read — are never crossed.
 
 Geometry and kinematics are imported from `octahedron.py` rather than restated:
 that module derives its orientation graph by rolling a real solid at import, and
