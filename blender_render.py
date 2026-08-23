@@ -832,37 +832,92 @@ _DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
 }
 
 
-def _digit_pixels(value: int, size: int):
+def _digit_coverage(value: int, size: int):
     """
-    Pixel offsets covering `value`, drawn as stroked letterforms in a box.
+    Per-pixel ink coverage for `value`, as a dict of (x, y) -> 0..1.
+
+    Coverage rather than a yes/no mask, because the digits are curves: a binary
+    mask renders every arc as a visible staircase, and at the size a face gets
+    on screen that is what made the numbers look ragged. Each pixel is sampled
+    on a subgrid and the fraction of samples falling within half a stroke width
+    of the path becomes its alpha, which is ordinary anti-aliasing -- the edge
+    pixels come out part-way between ink and body instead of jumping.
 
     The strokes are rasterised here rather than rendered from a font file, so
     the result does not depend on which fonts happen to be installed where this
     runs -- Blender's bundled font differs between builds and platforms.
     """
-    width = max(1.0, size * 0.11)
+    width = max(1.5, size * 0.11)
     half = width / 2.0
-    out = set()
+
+    # Flatten every stroke into segments once, in pixel space.
+    segments = []
     for stroke in _DIGIT_STROKES.get(value, []):
         for i in range(len(stroke) - 1):
             ax, ay = stroke[i][0] * size, stroke[i][1] * size
             bx, by = stroke[i + 1][0] * size, stroke[i + 1][1] * size
-            steps = max(2, int(math.hypot(bx - ax, by - ay)))
-            for s in range(steps + 1):
-                t = s / steps
-                px = ax + (bx - ax) * t
-                py = ay + (by - ay) * t
-                r = int(math.ceil(half))
-                for dy in range(-r, r + 1):
-                    for dx in range(-r, r + 1):
-                        if dx * dx + dy * dy <= half * half:
-                            out.add((int(px) + dx, int(py) + dy))
-    return sorted(out)
+            if abs(bx - ax) > 1e-9 or abs(by - ay) > 1e-9:
+                segments.append((ax, ay, bx, by))
+    if not segments:
+        return {}
+
+    def dist_sq(px, py):
+        """Squared distance from a point to the nearest stroke."""
+        best = float("inf")
+        for ax, ay, bx, by in segments:
+            dx, dy = bx - ax, by - ay
+            L = dx * dx + dy * dy
+            t = 0.0 if L < 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L))
+            ex, ey = ax + dx * t - px, ay + dy * t - py
+            d = ex * ex + ey * ey
+            if d < best:
+                best = d
+        return best
+
+    # Only pixels near a stroke can carry ink; bound the search by the strokes'
+    # own extent so the cost does not grow with the tile size.
+    pad = int(math.ceil(half)) + 2
+    xs = [c for s in segments for c in (s[0], s[2])]
+    ys = [c for s in segments for c in (s[1], s[3])]
+    x0 = max(0, int(min(xs)) - pad)
+    x1 = min(size - 1, int(max(xs)) + pad)
+    y0 = max(0, int(min(ys)) - pad)
+    y1 = min(size - 1, int(max(ys)) + pad)
+
+    SUB = 4                     # 4x4 samples per pixel
+    step = 1.0 / SUB
+    offset = step / 2.0
+    inner_sq = (half - 0.75) ** 2 if half > 0.75 else -1.0
+    outer_sq = (half + 0.75) ** 2
+
+    coverage = {}
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            # Cheap accept/reject on the pixel centre before subsampling.
+            centre = dist_sq(x + 0.5, y + 0.5)
+            if centre > outer_sq:
+                continue
+            if inner_sq > 0 and centre < inner_sq:
+                coverage[(x, y)] = 1.0
+                continue
+            hits = 0
+            for sy in range(SUB):
+                py = y + offset + sy * step
+                for sx in range(SUB):
+                    px = x + offset + sx * step
+                    if dist_sq(px, py) <= half * half:
+                        hits += 1
+            if hits:
+                coverage[(x, y)] = hits / (SUB * SUB)
+    return coverage
 
 
 def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
-                           tile: int = 256):
+                           tile: int = 512):
     """One material whose texture carries every face's number, in a grid atlas."""
+    # 512 rather than 256: the glyph occupies a third of a tile, so the smaller
+    # size left a digit only ~87px across to carry curves, and the stroke edges
+    # showed even after anti-aliasing. This doubles it to ~174px.
     slots = max(1, len(values))
     cols = int(math.ceil(math.sqrt(slots)))
     rows = int(math.ceil(slots / cols))
@@ -900,13 +955,14 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # tell which face a digit belongs to.
         inner = int(tile * GLYPH_FRACTION)
         pad = (tile - inner) // 2
-        for (dx, dy) in _digit_pixels(value, inner):
+        # Blend by coverage rather than stamping solid pixels, so the curves
+        # keep smooth edges instead of a staircase.
+        for (dx, dy), a in _digit_coverage(value, inner).items():
             x, y = cx + pad + dx, cy + pad + dy
             if 0 <= x < w and 0 <= y < h:
                 o = (y * w + x) * 4
-                px[o + 0] = ink[0]
-                px[o + 1] = ink[1]
-                px[o + 2] = ink[2]
+                for ch in range(3):
+                    px[o + ch] = ink[ch] * a + px[o + ch] * (1.0 - a)
 
     img.pixels = px
     img.pack()

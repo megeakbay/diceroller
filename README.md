@@ -248,6 +248,14 @@ digit is a set of independent strokes: chaining a bowl and its stem into one
 polyline draws a connecting segment across the glyph, which is what once turned
 the 6 into something that read as a `d`.
 
+The rasteriser computes **per-pixel coverage**, not a yes/no mask. These are
+curves, and a binary mask renders every arc as a visible staircase; each pixel
+is sampled on a 4×4 subgrid and the fraction of samples falling within half a
+stroke width becomes its alpha, so edge pixels land part-way between ink and
+body. The atlas tile is 512px, which leaves a digit about 174px across —
+at 256 it was 87px, small enough that the stroke edges still showed through
+the anti-aliasing.
+
 The glyph is sized against the **inradius** of the face's projected triangle,
 not against its bounding box. A triangle covers only half its box, so a square
 centred in the box overhangs two of the three edges — measured across all 24
