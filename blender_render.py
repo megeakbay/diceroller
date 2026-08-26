@@ -182,9 +182,26 @@ def view_direction() -> Tuple[float, float, float]:
     return (d.x, d.y, d.z)
 
 
+# Camera height for `--natural`. Matches the cube's own elevation, which is
+# where the request came from: the cube is viewed from slightly further above,
+# and its faces then sit at a consistent +/-26 degrees on screen, which is what
+# reads as ordinary perspective rather than as a diagram.
+#
+# It is only a small lift over the default 26. Going higher does not help this
+# solid -- measured across the 24 orientations, face-aligned digits tilt a
+# median 37 degrees at 26 and 51 at 45, because an octahedron's triangles never
+# square up to the view the way a cube's quads do.
+OCT_NATURAL_ELEVATION = 29.496
+
+
 def elevation_used(args) -> float:
     """The octahedron camera elevation this run is using."""
-    return getattr(args, "elevation", None) or OCT_ELEVATION
+    explicit = getattr(args, "elevation", None)
+    if explicit:
+        return explicit
+    if getattr(args, "natural", False):
+        return OCT_NATURAL_ELEVATION
+    return OCT_ELEVATION
 
 
 def camera_frame() -> Tuple["Vector", "Vector"]:
@@ -1008,9 +1025,23 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
 
 
 def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
-                          rows: int) -> None:
+                          rows: int, natural: bool = False) -> None:
     """
-    Give each face its own square of the atlas, squared to the camera.
+    Give each face its own square of the atlas.
+
+    Two modes. By default the tile is squared to the camera, so every digit
+    reads upright on screen whatever the face's roll. With `natural`, the tile
+    is squared to the face's own edges instead, so a digit sits in the surface
+    the way it does on a real die and tilts with it -- what the cube gets for
+    free, since its pips are placed in each face's own frame and a sphere has
+    no orientation to give away.
+
+    The trade is measured, not assumed: face-aligned leaves a median tilt of
+    37 degrees across the 24 orientations, and only 25% of visible faces within
+    30 degrees of level. Raising the camera does not rescue it -- at 45 degrees
+    the median is worse, 51 -- because these triangles never sit square to the
+    view the way a cube's quads do. So `natural` buys realism and costs
+    legibility, which is why it is opt-in rather than the default.
 
     Built by hand with `bmesh` rather than run through an unwrapping operator:
     the mapping is one triangle per tile, so there is nothing to solve, and a
@@ -1035,7 +1066,49 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
             continue
         cx, cy = slot % cols, slot // cols
 
-        pts = [(l.vert.co.dot(cam_right), l.vert.co.dot(cam_up))
+        if natural:
+            # Axes in the face's own plane, so the digit lies in the surface
+            # and follows its tilt. The in-plane "up" is chosen as the
+            # direction of the corner opposite the most level edge, which
+            # keeps the glyph standing on that edge rather than on a vertex.
+            fn = face.normal.normalized()
+            loops = list(face.loops)
+            # Pick the edge that looks most horizontal, measured as an angle on
+            # screen rather than as a slope ratio.
+            #
+            # A ratio ranks a near-vertical edge as "flat" once its run is
+            # tiny, which is how the front face ended up with its digit rolled
+            # 60 degrees while its neighbours sat within 21. An angle has no
+            # such blind spot, and the apex test keeps the glyph standing on
+            # the chosen edge rather than hanging from it.
+            best_axis, best_ang = None, None
+            for i in range(3):
+                a = loops[(i + 1) % 3].vert.co
+                b = loops[(i + 2) % 3].vert.co
+                d = b - a
+                rise = (loops[i].vert.co - (a + b) / 2.0).dot(cam_up)
+                if rise <= 1e-6:
+                    continue            # apex below its baseline: upside down
+                ang = abs(math.degrees(math.atan2(d.dot(cam_up),
+                                                  d.dot(cam_right))))
+                ang = min(ang, 180.0 - ang)       # direction, not sign
+                if best_ang is None or ang < best_ang:
+                    best_ang, best_axis = ang, d
+            if best_axis is None or best_axis.length < 1e-9:
+                axis_u = cam_right - fn * cam_right.dot(fn)
+            else:
+                axis_u = best_axis.copy()
+            axis_u = axis_u - fn * axis_u.dot(fn)
+            if axis_u.length < 1e-9:
+                axis_u = cam_right - fn * cam_right.dot(fn)
+            axis_u.normalize()
+            axis_v = fn.cross(axis_u).normalized()
+            if axis_v.dot(cam_up) < 0:
+                axis_v, axis_u = -axis_v, -axis_u
+        else:
+            axis_u, axis_v = cam_right, cam_up
+
+        pts = [(l.vert.co.dot(axis_u), l.vert.co.dot(axis_v))
                for l in face.loops]
         us = [p[0] for p in pts]
         vs = [p[1] for p in pts]
@@ -1419,7 +1492,7 @@ def convex_hull(points):
     return half(pts)[:-1] + half(pts[::-1])[:-1]
 
 
-def build_octahedron(cell, orientation: int, oct_) -> None:
+def build_octahedron(cell, orientation: int, oct_, natural: bool = False) -> None:
     """
     The solid at `cell`, in the pose the kinematics recorded.
 
@@ -1450,7 +1523,7 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
     obj = new_mesh_object("octahedron", verts, oct_.FACES, body_mat)
     unwrap_faces_to_atlas(
         obj, {fi: slot for slot, fi in enumerate(sorted(face_values))},
-        cols, rows)
+        cols, rows, natural=natural)
 
     # Rounded edges, as on the cube. The cube reads as a real object mostly
     # because of this: a wide, many-segment bevel carries a moving highlight
@@ -1463,8 +1536,11 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
     # while the cube next to it looked real. 0.032 is the widest that still
     # clears those vertices.
     bevel = obj.modifiers.new("Bevel", "BEVEL")
-    bevel.width = 0.032
-    bevel.segments = 6
+    # Wider without drawn edges: in `natural` mode the bevel is the only thing
+    # parting one face from the next, so it has to carry a visible highlight
+    # along every edge by itself.
+    bevel.width = 0.040 if natural else 0.032
+    bevel.segments = 8 if natural else 6
     bevel.limit_method = "ANGLE"
     bevel.angle_limit = math.radians(20.0)
     bevel.harden_normals = True
@@ -1493,6 +1569,16 @@ def build_octahedron(cell, orientation: int, oct_) -> None:
     # they read as ink drawn over a photograph -- the one part of the solid that
     # never responded to the light. A dark, lit material still separates the
     # faces while sitting in the same scene as the body.
+    #
+    # In `natural` mode they are skipped entirely, leaving the die a single
+    # object: one mesh, one material, its numbers in its own texture. A real
+    # die has no drawn edges -- the bevel and the light do that work -- so the
+    # strokes are exactly the part that gives away a diagram. The faces stay
+    # countable there because the wider bevel catches a different highlight on
+    # each one.
+    if natural:
+        return
+
     edge_mat = make_material("oct_die_edge", rgba(DIE_EDGE), roughness=0.5)
     seen = set()
     for f in oct_.FACES:
@@ -1570,7 +1656,8 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     # Camera before the solid: the face labels are rolled against the camera's
     # up axis so they read upright on screen, which needs the camera in place.
     setup_camera(target, elevation_used(args), OCT_AZIMUTH, ortho)
-    build_octahedron(at, orientation, oct_)
+    build_octahedron(at, orientation, oct_,
+                     natural=getattr(args, "natural", False))
     setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
     # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
     # the 2D renderer used.
@@ -1722,6 +1809,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                    help="Default: 1000 (cube) / 1500 (octahedron)")
     p.add_argument("--height", type=int, default=None,
                    help="Default: 1000 (cube) / 975 (octahedron)")
+    p.add_argument("--natural", action="store_true",
+                   help="Octahedron: numbers aligned to the faces' own edges "
+                        "rather than squared to the camera, no drawn edges, "
+                        "and a higher camera. Looks like a real die; the "
+                        "digits tilt with their faces, so they are less "
+                        "uniformly legible than the default.")
     p.add_argument("--elevation", type=float, default=None,
                    help="Octahedron camera height in degrees (default 26). "
                         "Higher widens the faces angled away from the camera, "

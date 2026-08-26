@@ -265,6 +265,37 @@ Ink is mixed toward a flat black shader by the texture's own darkness. The body
 is lit, so digits on a shaded face rendered mid-grey (measured RGB 103) despite
 being drawn black.
 
+### `--natural`: the die as an object
+
+`--natural` is an alternative octahedron look, closer to a photographed die:
+
+```bash
+python render_blender.py --variant octahedron --natural
+```
+
+Three differences from the default:
+
+- **Numbers align to the faces' own edges** instead of being squared to the
+  camera, so they lie in the surface and tilt with it.
+- **No drawn edges.** The default adds a dark cylinder along each edge to keep
+  the faces countable; here the die is a single object — one mesh, one
+  material, its numbers in its own texture — and a wider bevel (0.040, 8
+  segments) parts the faces with light instead. Drawn strokes are the part that
+  gives away a diagram.
+- **The camera sits at 29.5°**, matching the cube's own elevation rather than
+  the octahedron's 26°.
+
+It is opt-in because the trade is real and measured. Face-aligned digits tilt a
+median **37°** across the 24 orientations, with only 25% within 30° of level.
+Raising the camera does not rescue this — at 45° the median is **51°** — because
+an octahedron's triangles never square up to the view the way a cube's quads do.
+On some faces every upright option is 60° off: the front face has exactly one
+horizontal edge, and its apex points down, so using it would print the digit
+upside down.
+
+So `--natural` buys realism and costs legibility. The default stays the one to
+use when a model has to read the numbers, which is what the benchmark asks.
+
 ### Lighting
 
 A three-point rig: an area key for a penumbral contact shadow, a broad sun fill,
