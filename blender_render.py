@@ -864,7 +864,11 @@ def _digit_coverage(value: int, size: int):
     the result does not depend on which fonts happen to be installed where this
     runs -- Blender's bundled font differs between builds and platforms.
     """
-    width = max(1.5, size * 0.11)
+    # Stroke weight relative to the glyph box. Kept light: at 0.11 the bowls of
+    # an 8 nearly closed and a 3's curves ran together once the texture was
+    # minified onto a face, which reads as specks and gaps inside the digit
+    # rather than as a heavy weight.
+    width = max(1.5, size * 0.075)
     half = width / 2.0
 
     # Flatten every stroke into segments once, in pixel space.
@@ -1017,7 +1021,25 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
     # body and near-black on the ink, so invert it to drive the mix.
     inv = nodes.new("ShaderNodeInvert")
     links.new(tex.outputs["Color"], inv.inputs["Color"])
-    links.new(inv.outputs["Color"], mix.inputs["Fac"])
+
+    # Threshold the inverted texture before it drives the mix.
+    #
+    # Inverting alone does not separate ink from body cleanly: the body is a
+    # cream (#E8D5AC), so it inverts to roughly 0.2 rather than 0, and the
+    # anti-aliased edge of a stroke lands somewhere between. Feeding those
+    # middling values straight in makes the stroke partly transparent, and the
+    # lit body shows through it -- which is why digits had pale specks inside
+    # them. A steep ramp sends anything body-coloured to 0 and anything
+    # ink-coloured to 1, while leaving a narrow band for the anti-aliased edge
+    # so the glyph keeps its smooth outline.
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.interpolation = "LINEAR"
+    ramp.color_ramp.elements[0].position = 0.45
+    ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+    ramp.color_ramp.elements[1].position = 0.62
+    ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+    links.new(inv.outputs["Color"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], mix.inputs["Fac"])
     links.new(bsdf.outputs[0], mix.inputs[1])
     links.new(ink_shader.outputs[0], mix.inputs[2])
     links.new(mix.outputs[0], out.inputs["Surface"])
