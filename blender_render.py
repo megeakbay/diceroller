@@ -369,10 +369,29 @@ def setup_world(strength: float = 1.0) -> None:
     mix = nodes.new("ShaderNodeMixRGB")
     mix.inputs["Color2"].default_value = (1.0, 1.0, 1.0, 1.0)
 
+    # Strength scales the whole background, which would dim the page along with
+    # the lighting. Divide it back out on the camera-ray branch so the visible
+    # backdrop stays pure white however weak the ambient light is set: the two
+    # jobs of the world -- what the camera sees, and how much it lights the
+    # scene -- have to be tuned independently.
+    compensate = nodes.new("ShaderNodeMixRGB")
+    compensate.blend_type = "MULTIPLY"
+    compensate.inputs["Fac"].default_value = 1.0
+    inv_strength = 1.0 / strength if strength > 1e-6 else 1.0
+    compensate.inputs["Color2"].default_value = (
+        inv_strength, inv_strength, inv_strength, 1.0)
+    mix.inputs["Color2"].default_value = (1.0, 1.0, 1.0, 1.0)
+
     links.new(tex.outputs["Generated"], sep.inputs["Vector"])
     links.new(sep.outputs["Z"], ramp.inputs["Fac"])
     links.new(ramp.outputs["Color"], mix.inputs["Color1"])
     links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
+    # Compensate BEFORE the camera/lighting split, on the white the camera sees,
+    # so only the backdrop is scaled back up and the ambient stays as dim as
+    # `strength` asks. Applying it after the mix scaled both branches, which
+    # silently undid every reduction in ambient.
+    compensate.inputs["Color1"].default_value = (1.0, 1.0, 1.0, 1.0)
+    links.new(compensate.outputs["Color"], mix.inputs["Color2"])
     links.new(mix.outputs["Color"], bg.inputs["Color"])
     links.new(bg.outputs["Background"], out.inputs["Surface"])
 
@@ -399,30 +418,61 @@ def setup_lighting(target: Sequence[float], azimuth: float,
 
     az = math.radians(azimuth)
     # Key: offset ~50 degrees from the camera azimuth, high and to one side.
-    kaz = az + math.radians(50.0)
+    # Key offset from the camera azimuth.
+    #
+    # Solved against the solid's own normals rather than picked. One light
+    # cannot give four faces four tones here: swing it far enough to part the
+    # two side faces and one of them drops to zero and is lit only by ambient.
+    # 35 degrees keeps every face on the lit side of the key, and the
+    # counter-fill below supplies the difference the key cannot.
+    kaz = az + math.radians(55.0)
     key_data = bpy.data.lights.new("Key", type="AREA")
     # Sized so the brightest face stays inside the palette instead of blowing
     # out. At 900 the face most squarely lit clipped to pure white -- measured
     # on the octahedron's top face, which meets the key at 0.81 -- so the solid
     # lost its cream body colour exactly where the number sits.
-    key_data.energy = 380.0 * scale * scale
+    # Lower than before, because the key now strikes the front face more
+    # squarely: at 380 it clipped that face to 255,249,209 and the digit lost
+    # its background.
+    # Strong relative to the ambient. The two are one setting, not two: with a
+    # bright world the faces all sat within 4 luminance of each other, because
+    # ambient arrives equally from every direction and cannot separate them.
+    # Dropping the world to 0.35 and raising the key threefold makes the key the
+    # thing that shapes the solid -- measured, the closest pair of faces goes
+    # from 4 apart to 13.
+    key_data.energy = 720.0 * scale * scale
     key_data.size = 9.0 * scale
     key_data.shape = "DISK"
     key = bpy.data.objects.new("Key", key_data)
-    key.location = (target[0] + 11 * scale * math.cos(kaz),
-                    target[1] + 11 * scale * math.sin(kaz),
-                    target[2] + 15 * scale)
+    # Lower than it was (15), so the light rakes across the side faces instead
+    # of falling mostly on the top one.
+    # Placed by an explicit elevation (18 degrees) rather than a height, because
+    # that is the quantity the separation depends on: solved against the
+    # solid's own normals, 55 degrees round at 18 up is what parts the two
+    # side faces, which sit symmetrically about the view axis and therefore
+    # take the same light from anything more overhead.
+    kel = math.radians(18.0)
+    kdist = 14.0 * scale
+    key.location = (target[0] + kdist * math.cos(kel) * math.cos(kaz),
+                    target[1] + kdist * math.cos(kel) * math.sin(kaz),
+                    target[2] + kdist * math.sin(kel))
     aim(key, target)
     bpy.context.collection.objects.link(key)
 
     # Fill: broad and weak, from the camera side, to open the shadowed faces
     # without erasing the tonal separation the key just created.
     fill_data = bpy.data.lights.new("Fill", type="SUN")
-    fill_data.energy = 1.1
+    # Counter-fill, not an even fill: it comes from the opposite side of the
+    # camera to the key, so the face the key leaves darkest is the one it
+    # lifts. That is what gives four distinct tones instead of three plus a
+    # near-duplicate -- measured, the closest pair of faces goes from 0.04
+    # apart to 0.16.
+    fill_data.energy = 0.55
     fill_data.angle = math.radians(30.0)
     fill = bpy.data.objects.new("Fill", fill_data)
-    fill.location = (target[0] + 14 * scale * math.cos(az),
-                     target[1] + 14 * scale * math.sin(az),
+    faz = az - math.radians(70.0)
+    fill.location = (target[0] + 14 * scale * math.cos(faz),
+                     target[1] + 14 * scale * math.sin(faz),
                      target[2] + 7 * scale)
     aim(fill, target)
     bpy.context.collection.objects.link(fill)
@@ -833,14 +883,21 @@ _DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
     4: [[(0.66, 0.08), (0.66, 0.92)],
         [(0.66, 0.92), (0.18, 0.30), (0.84, 0.30)]],
     # Flat top bar, down the left, then the lower bowl.
-    5: [[(0.74, 0.92), (0.32, 0.92), (0.30, 0.56)],
-        _arc(0.50, 0.32, 0.24, 0.23, 105, -150, steps=22)],
+    # Top bar, down the left, then the bowl -- and the bowl starts where the
+    # stem ends. Beginning it at 105 degrees left the two 0.139 apart, four
+    # times the stroke's half-width, which showed as a nick in the digit.
+    5: [[(0.74, 0.92), (0.32, 0.92), (0.349, 0.499)],
+        _arc(0.50, 0.32, 0.24, 0.23, 129, -150, steps=24)],
     # Lower bowl, plus a spine curving up and to the RIGHT from it. Drawing the
     # spine on the right of the bowl is what makes a 6 rather than a d.
     6: [_arc(0.50, 0.30, 0.24, 0.24, 0, 360, steps=26),
         _arc(0.62, 0.56, 0.36, 0.36, 205, 122, steps=20)],
     7: [[(0.24, 0.92), (0.78, 0.92), (0.42, 0.08)]],
-    8: [_arc(0.50, 0.69, 0.20, 0.20, 0, 360, steps=24),
+    # Two bowls meeting at a waist. The radii and centres are chosen so they are
+    # tangent: the lower bowl reaches 0.53 and the upper starts there. Sized by
+    # eye before, they overlapped by 0.040, so the rings ran into each other and
+    # the waist read as a blot rather than a crossing.
+    8: [_arc(0.50, 0.715, 0.185, 0.185, 0, 360, steps=24),
         _arc(0.50, 0.29, 0.24, 0.24, 0, 360, steps=26)],
     # Upper bowl, with the tail falling on the right -- the 6 turned about its
     # centre.
@@ -1628,7 +1685,7 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     oct_ = load_octahedron_module()
 
     reset_scene()
-    setup_world()
+    setup_world(0.35)
 
     trace = meta["trace"]
     board = oct_._board_near_path(trace, tuple(meta["board_radius"]))
