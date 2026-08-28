@@ -51,42 +51,86 @@ def octahedron_adjacency() -> Dict[int, List[int]]:
     return out
 
 
-def _octahedron_layout() -> List[Tuple[int, Tuple[float, float], bool]]:
+def _octahedron_layout():
     """
-    Place the eight triangles in the standard two-strip net.
+    Unfold the die from the pose it actually rests in.
 
-    Returns (value, (cx, cy) of the triangle's centroid, points_up).
+    Rather than an arbitrary strip, this is the solid opened out from its
+    resting face: that face in the middle, the three faces it touches folded
+    down around it, then the three that touch the top face, and the top face
+    itself on the outside. Every position is derived from the real adjacency
+    graph, so the picture is the die's own construction rather than a
+    convention imposed on it.
 
-    The arrangement is the usual one for a D8: two rows of four, each row a
-    strip of alternating up- and down-pointing triangles, with the rows offset
-    so that folding brings the matching edges together.
+    Returns (value, [(x, y) x3]) with the corners already in place.
     """
     import octahedron as oct_
 
-    adj = octahedron_adjacency()
+    verts = oct_.POSES[0]
+    resting = oct_._bottom_face(verts)
+    top = oct_.OPPOSITE[resting]
 
-    # Walk the adjacency graph to lay a strip out, so the drawing matches the
-    # solid rather than a guess about which faces are neighbours.
-    top_face = 1
-    top_strip = [top_face]
-    while len(top_strip) < 4:
-        cur = top_strip[-1]
-        nxt = [v for v in adj[cur]
-               if v not in top_strip and _opposite_value(v) not in top_strip]
-        if not nxt:
-            nxt = [v for v in adj[cur] if v not in top_strip]
-        top_strip.append(nxt[0])
+    def neighbours(i):
+        si = set(oct_.FACES[i])
+        return [j for j in range(8)
+                if j != i and len(si & set(oct_.FACES[j])) == 2]
 
-    bottom_strip = [_opposite_value(v) for v in top_strip]
+    ring1 = neighbours(resting)            # share an edge with the resting face
+    ring2 = neighbours(top)                # share an edge with the top face
 
-    # Two strips, the lower one offset by one half-triangle so the folded
-    # edges line up, which is the standard D8 net.
-    layout = []
-    for i, v in enumerate(top_strip):
-        layout.append((v, i, 0.0, i % 2 == 0))
-    for i, v in enumerate(bottom_strip):
-        layout.append((v, i + 1, -H, i % 2 == 1))
+    # The central triangle, point up, with its three neighbours folded out
+    # across its three edges.
+    s = 1.0
+    h = H * s
+    centre = [(-s / 2, -h / 3), (s / 2, -h / 3), (0.0, 2 * h / 3)]
+
+    layout = [(oct_.FACE_VALUES[resting], centre)]
+
+    # Each edge of the centre triangle carries one ring1 face, reflected across
+    # that edge so the two share it exactly.
+    edges = [(centre[0], centre[1]), (centre[1], centre[2]), (centre[2], centre[0])]
+    opposite_corner = [centre[2], centre[0], centre[1]]
+
+    ring1_placed = {}
+    for (a, b), apex, j in zip(edges, opposite_corner, ring1):
+        outer = _reflect(apex, a, b)
+        layout.append((oct_.FACE_VALUES[j], [a, b, outer]))
+        ring1_placed[j] = (a, b, outer)
+
+    # Each ring1 face has two free edges; one carries a ring2 face. Choose the
+    # ring2 face that genuinely shares that edge on the solid.
+    ring2_placed = {}
+    for j, (a, b, outer) in ring1_placed.items():
+        partners = [k for k in neighbours(j) if k in ring2 and k not in ring2_placed]
+        if not partners:
+            continue
+        k = partners[0]
+        # Fold across the edge (b, outer).
+        far = _reflect(a, b, outer)
+        layout.append((oct_.FACE_VALUES[k], [b, outer, far]))
+        ring2_placed[k] = (b, outer, far)
+
+    # The top face folds off whichever ring2 face still has a free edge.
+    if ring2_placed:
+        k, (a, b, outer) = next(iter(ring2_placed.items()))
+        far = _reflect(a, b, outer)
+        layout.append((oct_.FACE_VALUES[top], [b, outer, far]))
+
     return layout
+
+
+def _reflect(p, a, b):
+    """Mirror point `p` across the line through `a` and `b`."""
+    ax, ay = a
+    bx, by = b
+    px, py = p
+    dx, dy = bx - ax, by - ay
+    L = dx * dx + dy * dy
+    if L < 1e-12:
+        return p
+    t = ((px - ax) * dx + (py - ay) * dy) / L
+    cx, cy = ax + dx * t, ay + dy * t
+    return (2 * cx - px, 2 * cy - py)
 
 
 def _opposite_value(value: int) -> int:
@@ -126,11 +170,11 @@ def _triangle_centre(index: int, row_y: float, up: bool, size: float = 1.0):
 
 def draw_octahedron_net(ax) -> None:
     """The eight-faced die, unfolded."""
-    for value, index, row_y, up in _octahedron_layout():
-        pts = _triangle(index, row_y, up)
+    for value, pts in _octahedron_layout():
         ax.add_patch(Polygon(pts, closed=True, facecolor=NET_FACE,
                              edgecolor=NET_EDGE, linewidth=1.6))
-        cx, cy = _triangle_centre(index, row_y, up)
+        cx = sum(p[0] for p in pts) / 3.0
+        cy = sum(p[1] for p in pts) / 3.0
         ax.text(cx, cy, str(value), ha="center", va="center",
                 fontsize=17, fontweight="bold", color=NET_INK)
 
@@ -150,15 +194,20 @@ def draw_cube_net(ax) -> None:
     from generator import canonical_die
 
     die = canonical_die()
-    # Cross layout: the four sides in a row, top and bottom above and below the
-    # second column. Positions are (col, row) in face widths.
+    # Unfolded from the pose the die rests in: the face on the board in the
+    # middle, the four it touches folded out around it, and the top face
+    # beyond one of them. Laid out as (col, row) in face widths.
+    #
+    # Reading it from the die's own state rather than hardcoding numbers keeps
+    # the sheet true to the solid: change the starting orientation and the net
+    # follows.
     faces = [
-        (die.north, (1, 2)),
+        (die.bottom, (1, 1)),      # resting on the board, at the centre
         (die.west, (0, 1)),
-        (die.top, (1, 1)),
+        (die.north, (1, 2)),
         (die.east, (2, 1)),
-        (die.bottom, (3, 1)),
         (die.south, (1, 0)),
+        (die.top, (3, 1)),         # opposite the resting face, on the outside
     ]
     for value, (col, row) in faces:
         x0, y0 = col * 1.0, row * 1.0
@@ -182,18 +231,13 @@ def render_net(variant: str, out_path: Path) -> None:
 
     if variant == "octahedron":
         draw_octahedron_net(ax)
-        opposites = sorted({tuple(sorted((v, _opposite_value(v))))
-                            for v in range(1, 9)})
-        caption = ("Faces of the eight-sided die, unfolded.  "
-                   "Opposite faces sum to 9:  "
-                   + ",  ".join(f"{a}+{b}" for a, b in opposites))
     else:
         draw_cube_net(ax)
-        caption = ("Faces of the six-sided die, unfolded.  "
-                   "Opposite faces sum to 7:  1+6,  2+5,  3+4")
 
+    # No caption. The opposite-face rule is already stated in the prompts, so
+    # repeating it here would only be words for a reader that is being shown a
+    # picture -- the net is meant to be read as the die's shape, not annotated.
     ax.autoscale_view()
-    ax.set_title(caption, fontsize=8.5, color=BOARD_EDGE, pad=12, wrap=True)
     fig.tight_layout()
     fig.savefig(out_path, dpi=170, bbox_inches="tight", facecolor="white")
     plt.close(fig)

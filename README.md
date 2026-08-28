@@ -386,10 +386,16 @@ still has to track the rolls to know where those faces have ended up. This is
 deliberately unlike the six-face T/B/N/S/E/W readout an earlier version drew
 above the board, which let the answer be read straight off the picture.
 
-Adjacency is read out of the live geometry rather than hand-drawn, so a net
-cannot drift from the solid the renderer builds. The octahedron's two strips of
-four are laid out by walking the real adjacency graph, and the cube's cross is
-checked so no opposite pair shares an edge.
+The net is an unfolding **from the pose the die rests in**, not an arbitrary
+arrangement: the face on the board sits at the centre, the faces it touches
+fold out around it, and the opposite face ends up on the outside. Positions come
+from the live adjacency graph, so the picture cannot drift from the solid the
+renderer builds — verified for the octahedron that all eight faces appear once,
+none overlap, all are equal in area, and every edge in the net is a real
+adjacency on the solid; and for the cube that no opposite pair shares an edge.
+
+It carries no caption. The opposite-face rule is already in the prompts, so the
+net is left to be read as the die's shape rather than annotated.
 
 ## Kinematics
 
