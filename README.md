@@ -241,18 +241,29 @@ level. Since reading the digits *is* the task, they are squared to the viewer.
 Measured after the change, 96/96 visible faces land within a fraction of a
 degree of upright.
 
-The digit shapes are stroke paths rasterised into the atlas rather than text
-rendered from a font file, so the result does not depend on which fonts a
-machine happens to have — Blender's bundled font differs between builds. Each
-digit is a set of independent strokes: chaining a bowl and its stem into one
-polyline draws a connecting segment across the glyph, which is what once turned
-the 6 into something that read as a `d`.
+The digits come from a real font, baked to outlines ahead of time:
+
+```bash
+python bake_digits.py     # rewrites digit_outlines.json
+```
+
+They were hand-built from arcs and lines for a while, on the reasoning that a
+font file might not exist wherever this runs. The reasoning was sound and the
+result was not — every digit had to be shaped by hand, and each fix traded one
+flaw for another. Baking from the font matplotlib ships with itself gives
+properly designed letterforms, reproducibly, while keeping the renderer free of
+any font dependency: Blender's bundled Python has no matplotlib, which is what
+ruled out reading a font at render time. Each closed contour is kept separate
+and filled with an even-odd rule, so the counters stay open — the hole in a 6,
+both holes in an 8.
 
 The rasteriser computes **per-pixel coverage**, not a yes/no mask. These are
 curves, and a binary mask renders every arc as a visible staircase; each pixel
-is sampled on a 4×4 subgrid and the fraction of samples falling within half a
-stroke width becomes its alpha, so edge pixels land part-way between ink and
-body. The atlas tile is 512px, which leaves a digit about 174px across —
+is sampled on a subgrid and the fraction of samples inside the glyph becomes
+its alpha, so edge pixels land part-way between ink and body. It fills one
+scanline at a time: testing every subsample against every edge took 32 seconds
+for a single glyph at atlas size, against 0.29 for the scanline fill, and the
+result is cached per (value, size) since the atlas is rebuilt for every frame. The atlas tile is 512px, which leaves a digit about 174px across —
 at 256 it was 87px, small enough that the stroke edges still showed through
 the anti-aliasing.
 
@@ -397,12 +408,10 @@ adjacency on the solid; and for the cube that no opposite pair shares an edge.
 It carries no caption. The opposite-face rule is already in the prompts, so the
 net is left to be read as the die's shape rather than annotated.
 
-The numbers are drawn with the **same stroke paths the 3D renderer paints onto
-the faces** (`blender_render._DIGIT_STROKES`, which imports fine outside
-Blender), not with a system font. The two are drawn by completely different
-machinery and had visibly diverged — matplotlib's bold sans against the
-renderer's thin geometric strokes — which would make a reader match two
-letterforms before they could use the sheet. The cube's net was already
+The numbers are drawn from the **same font the renderer bakes into the face
+texture** (`blender_render._GLYPH_FAMILY`). The two were once drawn by
+completely different machinery and had visibly diverged, which would make a
+reader match two letterforms before they could use the sheet. The cube's net was already
 consistent, since its pips come from the same `_PIP_LAYOUT` the renderer uses.
 
 ## Kinematics
