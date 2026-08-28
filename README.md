@@ -397,6 +397,14 @@ adjacency on the solid; and for the cube that no opposite pair shares an edge.
 It carries no caption. The opposite-face rule is already in the prompts, so the
 net is left to be read as the die's shape rather than annotated.
 
+The numbers are drawn with the **same stroke paths the 3D renderer paints onto
+the faces** (`blender_render._DIGIT_STROKES`, which imports fine outside
+Blender), not with a system font. The two are drawn by completely different
+machinery and had visibly diverged — matplotlib's bold sans against the
+renderer's thin geometric strokes — which would make a reader match two
+letterforms before they could use the sheet. The cube's net was already
+consistent, since its pips come from the same `_PIP_LAYOUT` the renderer uses.
+
 ## Kinematics
 
 The engine carries the die as an explicit six-face state; rolling permutes the

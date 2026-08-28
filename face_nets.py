@@ -35,6 +35,35 @@ NET_INK = PIP_COLOR
 
 
 # ============================================================================
+# Digits
+#
+# The net draws its numbers with the *same* stroke paths the 3D renderer paints
+# onto the faces, rather than with a system font. A reference sheet that used a
+# different letterform from the pictures it describes would make the reader
+# match two shapes before they could use it -- and the two are drawn by
+# completely different machinery, so they diverged visibly: matplotlib's bold
+# sans against the renderer's thin geometric strokes.
+# ============================================================================
+
+def draw_digit(ax, value: int, cx: float, cy: float, size: float,
+               color: str = NET_INK, lw_scale: float = 0.11) -> None:
+    """
+    Stroke `value` centred on (cx, cy), `size` tall, in the renderer's own hand.
+
+    Paths come from `blender_render._DIGIT_STROKES`, which is importable
+    outside Blender, so there is one definition of what a digit looks like
+    across the whole dataset.
+    """
+    from blender_render import _DIGIT_STROKES
+
+    for stroke in _DIGIT_STROKES.get(value, []):
+        xs = [cx + (px - 0.5) * size for px, _ in stroke]
+        ys = [cy + (py - 0.5) * size for _, py in stroke]
+        ax.plot(xs, ys, color=color, linewidth=size * lw_scale * 72 / 1.2,
+                solid_capstyle="round", solid_joinstyle="round", zorder=6)
+
+
+# ============================================================================
 # Octahedron
 # ============================================================================
 
@@ -175,8 +204,7 @@ def draw_octahedron_net(ax) -> None:
                              edgecolor=NET_EDGE, linewidth=1.6))
         cx = sum(p[0] for p in pts) / 3.0
         cy = sum(p[1] for p in pts) / 3.0
-        ax.text(cx, cy, str(value), ha="center", va="center",
-                fontsize=17, fontweight="bold", color=NET_INK)
+        draw_digit(ax, value, cx, cy, size=0.42)
 
 
 # ============================================================================
