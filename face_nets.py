@@ -50,17 +50,35 @@ def draw_digit(ax, value: int, cx: float, cy: float, size: float,
     """
     Stroke `value` centred on (cx, cy), `size` tall, in the renderer's own hand.
 
-    Paths come from `blender_render._DIGIT_STROKES`, which is importable
-    outside Blender, so there is one definition of what a digit looks like
-    across the whole dataset.
+    Uses the same font the renderer bakes into the face texture
+    (`blender_render._GLYPH_FAMILY`), so there is one definition of what a
+    digit looks like across the whole dataset.
     """
-    from blender_render import _DIGIT_STROKES
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    from matplotlib.patches import PathPatch
+    from matplotlib.transforms import Affine2D
 
-    for stroke in _DIGIT_STROKES.get(value, []):
-        xs = [cx + (px - 0.5) * size for px, _ in stroke]
-        ys = [cy + (py - 0.5) * size for _, py in stroke]
-        ax.plot(xs, ys, color=color, linewidth=size * lw_scale * 72 / 1.2,
-                solid_capstyle="round", solid_joinstyle="round", zorder=6)
+    from blender_render import _GLYPH_FAMILY, _GLYPH_WEIGHT
+
+    prop = FontProperties(family=_GLYPH_FAMILY, weight=_GLYPH_WEIGHT)
+    path = TextPath((0.0, 0.0), str(value), size=1.0, prop=prop)
+    v = path.vertices
+    if len(v) == 0:
+        return
+    x0, x1 = float(v[:, 0].min()), float(v[:, 0].max())
+    y0, y1 = float(v[:, 1].min()), float(v[:, 1].max())
+    gw, gh = x1 - x0, y1 - y0
+    if gw <= 0 or gh <= 0:
+        return
+
+    s = size / max(gw, gh)
+    tr = (Affine2D()
+          .translate(-(x0 + gw / 2.0), -(y0 + gh / 2.0))
+          .scale(s)
+          .translate(cx, cy))
+    ax.add_patch(PathPatch(tr.transform_path(path), facecolor=color,
+                           edgecolor="none", zorder=6))
 
 
 # ============================================================================
@@ -204,7 +222,7 @@ def draw_octahedron_net(ax) -> None:
                              edgecolor=NET_EDGE, linewidth=1.6))
         cx = sum(p[0] for p in pts) / 3.0
         cy = sum(p[1] for p in pts) / 3.0
-        draw_digit(ax, value, cx, cy, size=0.42)
+        draw_digit(ax, value, cx, cy, size=0.30)
 
 
 # ============================================================================

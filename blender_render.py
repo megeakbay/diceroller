@@ -849,150 +849,117 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 GLYPH_FRACTION = 0.34
 
 
-# Classic digit outlines, as stroke paths in a unit box.
+# Digits come from a real font, baked to outlines ahead of time.
 #
-# The digits were drawn as seven segments first, which reads as a calculator
-# display rather than as the numbering on a die. These are ordinary letterforms:
-# each entry is a list of polylines, and closed shapes repeat their first point.
-# Curves are approximated by enough points that they render smooth at the
-# texture sizes used here.
-def _arc(cx, cy, rx, ry, a0, a1, steps=16):
-    """Points along an ellipse arc, angles in degrees, counter-clockwise."""
-    out = []
-    for i in range(steps + 1):
-        t = math.radians(a0 + (a1 - a0) * i / steps)
-        out.append((cx + rx * math.cos(t), cy + ry * math.sin(t)))
-    return out
+# They were hand-built from arcs and lines here for a while, on the reasoning
+# that a font file might not exist wherever this runs. The reasoning was sound
+# and the result was not: every digit had to be shaped by hand, and each fix
+# traded one flaw for another -- the 6's spine met its bowl at a kink, and
+# correcting that made it lean like a b.
+#
+# `bake_digits.py` writes `digit_outlines.json` from the font matplotlib ships
+# with itself, so the shapes are properly designed and reproducible, and this
+# module needs nothing at render time -- Blender's bundled Python has no
+# matplotlib, which is what ruled out reading the font here directly.
+_GLYPH_FAMILY = "DejaVu Sans"
+_GLYPH_WEIGHT = "bold"
+_OUTLINE_FILE = "digit_outlines.json"
+
+_DIGIT_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}
 
 
-# Each digit is a list of independent strokes. Keeping the bowl and the stem as
-# separate strokes matters: chaining them into one polyline draws a connecting
-# segment across the glyph, which is what turned the 6 into something that read
-# as a "d" -- its tail was being drawn up the right-hand side of the bowl.
-_DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
-    0: [_arc(0.50, 0.50, 0.25, 0.40, 0, 360, steps=28)],
-    1: [[(0.30, 0.74), (0.50, 0.92), (0.50, 0.08)],
-        [(0.28, 0.08), (0.72, 0.08)]],
-    # Top bowl opening to the right, then the diagonal down to a flat base.
-    2: [_arc(0.50, 0.68, 0.23, 0.22, 190, -35, steps=22)
-        + [(0.26, 0.08)],
-        [(0.24, 0.08), (0.78, 0.08)]],
-    # Two right-facing bowls meeting at the waist.
-    3: [_arc(0.50, 0.70, 0.22, 0.21, 165, -80, steps=22),
-        _arc(0.50, 0.30, 0.24, 0.23, 80, -170, steps=22)],
-    4: [[(0.66, 0.08), (0.66, 0.92)],
-        [(0.66, 0.92), (0.18, 0.30), (0.84, 0.30)]],
-    # Flat top bar, down the left, then the lower bowl.
-    # Top bar, down the left, then the bowl -- and the bowl starts where the
-    # stem ends. Beginning it at 105 degrees left the two 0.139 apart, four
-    # times the stroke's half-width, which showed as a nick in the digit.
-    5: [[(0.74, 0.92), (0.32, 0.92), (0.349, 0.499)],
-        _arc(0.50, 0.32, 0.24, 0.23, 129, -150, steps=24)],
-    # Lower bowl, plus a spine that leaves it tangentially and rises to the
-    # right. Drawing the spine on the right is what makes a 6 rather than a d.
-    #
-    # The spine's arc is solved to be tangent to the bowl where they meet: its
-    # centre sits on the line through the bowl's centre and the join, so the
-    # two curves share a direction there and flow into one another. An earlier
-    # spine merely touched the bowl at roughly the right place, which left a
-    # visible kink where the stroke changed direction at the join.
-    6: [_arc(0.50, 0.30, 0.24, 0.24, 0, 360, steps=26),
-        _arc(0.024, 0.867, 0.50, 0.50, -50, -10, steps=22)],
-    7: [[(0.24, 0.92), (0.78, 0.92), (0.42, 0.08)]],
-    # Two bowls meeting at a waist. The radii and centres are chosen so they are
-    # tangent: the lower bowl reaches 0.53 and the upper starts there. Sized by
-    # eye before, they overlapped by 0.040, so the rings ran into each other and
-    # the waist read as a blot rather than a crossing.
-    8: [_arc(0.50, 0.715, 0.185, 0.185, 0, 360, steps=24),
-        _arc(0.50, 0.29, 0.24, 0.24, 0, 360, steps=26)],
-    # Upper bowl, with the tail falling on the right -- the 6 turned about its
-    # centre.
-    9: [_arc(0.50, 0.70, 0.24, 0.24, 0, 360, steps=26),
-        _arc(0.38, 0.44, 0.36, 0.36, 25, -58, steps=20)],
-}
+def _load_outlines() -> Dict[int, List[List[Tuple[float, float]]]]:
+    """Read the baked outlines, once."""
+    global _DIGIT_OUTLINES
+    if _DIGIT_OUTLINES:
+        return _DIGIT_OUTLINES
+    path = Path(__file__).resolve().parent / _OUTLINE_FILE
+    with open(path) as f:
+        raw = json.load(f)
+    _DIGIT_OUTLINES = {int(k): [[(p[0], p[1]) for p in poly] for poly in v]
+                       for k, v in raw.items()}
+    return _DIGIT_OUTLINES
+
+
+_COVERAGE_CACHE: Dict[Tuple[int, int], Dict[Tuple[int, int], float]] = {}
 
 
 def _digit_coverage(value: int, size: int):
     """
     Per-pixel ink coverage for `value`, as a dict of (x, y) -> 0..1.
 
-    Coverage rather than a yes/no mask, because the digits are curves: a binary
-    mask renders every arc as a visible staircase, and at the size a face gets
-    on screen that is what made the numbers look ragged. Each pixel is sampled
-    on a subgrid and the fraction of samples falling within half a stroke width
-    of the path becomes its alpha, which is ordinary anti-aliasing -- the edge
-    pixels come out part-way between ink and body instead of jumping.
+    Coverage rather than a yes/no mask, because a binary mask renders curves as
+    a visible staircase at the size a face gets on screen. Each pixel is
+    sampled on a subgrid and the fraction of samples inside the glyph becomes
+    its alpha, so edge pixels land part-way between ink and body.
 
-    The strokes are rasterised here rather than rendered from a font file, so
-    the result does not depend on which fonts happen to be installed where this
-    runs -- Blender's bundled font differs between builds and platforms.
+    Insideness uses the even-odd rule across all of a digit's contours, which
+    is what keeps the counters open -- the hole in a 6, both holes in an 8.
     """
-    # Stroke weight relative to the glyph box. Kept light: at 0.11 the bowls of
-    # an 8 nearly closed and a 3's curves ran together once the texture was
-    # minified onto a face, which reads as specks and gaps inside the digit
-    # rather than as a heavy weight.
-    width = max(1.5, size * 0.075)
-    half = width / 2.0
+    # Cached: the atlas is rebuilt for every frame, but a digit's coverage
+    # depends only on the value and the size, so it is computed once per run.
+    key = (value, size)
+    if key in _COVERAGE_CACHE:
+        return _COVERAGE_CACHE[key]
 
-    # Flatten every stroke into segments once, in pixel space.
-    segments = []
-    for stroke in _DIGIT_STROKES.get(value, []):
-        for i in range(len(stroke) - 1):
-            ax, ay = stroke[i][0] * size, stroke[i][1] * size
-            bx, by = stroke[i + 1][0] * size, stroke[i + 1][1] * size
-            if abs(bx - ax) > 1e-9 or abs(by - ay) > 1e-9:
-                segments.append((ax, ay, bx, by))
-    if not segments:
+    contours = _load_outlines().get(value, [])
+    if not contours:
         return {}
 
-    def dist_sq(px, py):
-        """Squared distance from a point to the nearest stroke."""
-        best = float("inf")
-        for ax, ay, bx, by in segments:
-            dx, dy = bx - ax, by - ay
-            L = dx * dx + dy * dy
-            t = 0.0 if L < 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L))
-            ex, ey = ax + dx * t - px, ay + dy * t - py
-            d = ex * ex + ey * ey
-            if d < best:
-                best = d
-        return best
+    xs = [p[0] for c in contours for p in c]
+    ys = [p[1] for c in contours for p in c]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    gw, gh = x1 - x0, y1 - y0
+    if gw <= 0 or gh <= 0:
+        return {}
 
-    # Only pixels near a stroke can carry ink; bound the search by the strokes'
-    # own extent so the cost does not grow with the tile size.
-    pad = int(math.ceil(half)) + 2
-    xs = [c for s in segments for c in (s[0], s[2])]
-    ys = [c for s in segments for c in (s[1], s[3])]
-    x0 = max(0, int(min(xs)) - pad)
-    x1 = min(size - 1, int(max(xs)) + pad)
-    y0 = max(0, int(min(ys)) - pad)
-    y1 = min(size - 1, int(max(ys)) + pad)
+    # Fit the glyph into the box, preserving its proportions and centring it.
+    scale = min(size / gw, size / gh) * 0.92
+    ox = (size - gw * scale) / 2.0
+    oy = (size - gh * scale) / 2.0
 
-    SUB = 4                     # 4x4 samples per pixel
+    # Scanline fill rather than a point test per sample.
+    #
+    # Testing every subsample against every edge was correct and far too slow:
+    # 32 seconds for one glyph at the size the atlas uses, and the atlas is
+    # built per frame. Crossings only change along a row, so each scanline is
+    # solved once and the spans between crossings are filled directly.
+    def spans(y: float):
+        """x-intervals of ink along the horizontal line at `y`, even-odd."""
+        xs = []
+        for c in contours:
+            n = len(c)
+            for i in range(n):
+                ax, ay = c[i]
+                bx, by = c[(i + 1) % n]
+                if (ay > y) != (by > y):
+                    xs.append(ax + (y - ay) / (by - ay) * (bx - ax))
+        xs.sort()
+        return [(xs[i], xs[i + 1]) for i in range(0, len(xs) - 1, 2)]
+
+    SUB = 3                                   # 3x3 samples per pixel
     step = 1.0 / SUB
     offset = step / 2.0
-    inner_sq = (half - 0.75) ** 2 if half > 0.75 else -1.0
-    outer_sq = (half + 0.75) ** 2
+    per = SUB * SUB
 
-    coverage = {}
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            # Cheap accept/reject on the pixel centre before subsampling.
-            centre = dist_sq(x + 0.5, y + 0.5)
-            if centre > outer_sq:
-                continue
-            if inner_sq > 0 and centre < inner_sq:
-                coverage[(x, y)] = 1.0
-                continue
-            hits = 0
-            for sy in range(SUB):
-                py = y + offset + sy * step
-                for sx in range(SUB):
-                    px = x + offset + sx * step
-                    if dist_sq(px, py) <= half * half:
-                        hits += 1
-            if hits:
-                coverage[(x, y)] = hits / (SUB * SUB)
+    counts: Dict[Tuple[int, int], int] = {}
+    for py in range(size):
+        for sy in range(SUB):
+            gy = (py + offset + sy * step - oy) / scale + y0
+            for sx0, sx1 in spans(gy):
+                # Convert this ink interval back to pixel space and add its
+                # subsample hits, one row of the subgrid at a time.
+                a = (sx0 - x0) * scale + ox
+                b = (sx1 - x0) * scale + ox
+                lo = max(0, int(math.floor(a)))
+                hi = min(size - 1, int(math.ceil(b)))
+                for px in range(lo, hi + 1):
+                    for sx in range(SUB):
+                        gx = px + offset + sx * step
+                        if a <= gx <= b:
+                            counts[(px, py)] = counts.get((px, py), 0) + 1
+    coverage = {k: v / per for k, v in counts.items() if v}
+    _COVERAGE_CACHE[key] = coverage
     return coverage
 
 
