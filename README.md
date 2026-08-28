@@ -363,6 +363,34 @@ that module derives its orientation graph by rolling a real solid at import, and
 a second copy here could drift from the ground truth the dataset was generated
 against.
 
+## Reference nets
+
+Every puzzle directory also gets a `net.png`: its die unfolded flat, showing
+each face's value and which faces touch which.
+
+```bash
+python face_nets.py --output-dir output
+python face_nets.py --output-dir output --variant octahedron
+```
+
+It needs no Blender — the net is flat, so it is drawn in matplotlib. The
+filename is recorded in each `metadata.json` as `net_image`, so a consumer
+finds it the same way it finds the frames.
+
+A net shows the die's **construction**, which is fixed for the whole dataset,
+not its current orientation. That is what makes it safe to include here: the
+prompts already state the opposite-face rule (sum to 7 on the cube, 9 on the
+octahedron), and `face_layout` already names the hidden values at every step.
+What neither gives is the adjacency, and that is all the net adds — a model
+still has to track the rolls to know where those faces have ended up. This is
+deliberately unlike the six-face T/B/N/S/E/W readout an earlier version drew
+above the board, which let the answer be read straight off the picture.
+
+Adjacency is read out of the live geometry rather than hand-drawn, so a net
+cannot drift from the solid the renderer builds. The octahedron's two strips of
+four are laid out by walking the real adjacency graph, and the cube's cross is
+checked so no opposite pair shares an edge.
+
 ## Kinematics
 
 The engine carries the die as an explicit six-face state; rolling permutes the
