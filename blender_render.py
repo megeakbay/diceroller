@@ -888,10 +888,16 @@ _DIGIT_STROKES: Dict[int, List[List[Tuple[float, float]]]] = {
     # times the stroke's half-width, which showed as a nick in the digit.
     5: [[(0.74, 0.92), (0.32, 0.92), (0.349, 0.499)],
         _arc(0.50, 0.32, 0.24, 0.23, 129, -150, steps=24)],
-    # Lower bowl, plus a spine curving up and to the RIGHT from it. Drawing the
-    # spine on the right of the bowl is what makes a 6 rather than a d.
+    # Lower bowl, plus a spine that leaves it tangentially and rises to the
+    # right. Drawing the spine on the right is what makes a 6 rather than a d.
+    #
+    # The spine's arc is solved to be tangent to the bowl where they meet: its
+    # centre sits on the line through the bowl's centre and the join, so the
+    # two curves share a direction there and flow into one another. An earlier
+    # spine merely touched the bowl at roughly the right place, which left a
+    # visible kink where the stroke changed direction at the join.
     6: [_arc(0.50, 0.30, 0.24, 0.24, 0, 360, steps=26),
-        _arc(0.62, 0.56, 0.36, 0.36, 205, 122, steps=20)],
+        _arc(0.024, 0.867, 0.50, 0.50, -50, -10, steps=22)],
     7: [[(0.24, 0.92), (0.78, 0.92), (0.42, 0.08)]],
     # Two bowls meeting at a waist. The radii and centres are chosen so they are
     # tangent: the lower bowl reaches 0.53 and the upper starts there. Sized by
