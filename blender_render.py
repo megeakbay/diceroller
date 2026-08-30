@@ -1746,11 +1746,31 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     # cells it names, and it covered the front face's number.
     route_z = 0.02
     pts = [(t["cell"][0], t["cell"][1]) for t in trace]
+
+    def stop_short(run, frac=0.42):
+        """
+        Pull a run back from the cell the solid stands on.
+
+        The solid occupies that cell and rises out of it, so a route drawn all
+        the way to the centre emerges from under the body as a stub -- with the
+        run arriving from the camera's side it reads as a black block sitting
+        against the die rather than as a path going beneath it. Ending the run
+        partway into the last step leaves the route clearly headed for the cell
+        without colliding with what is standing there.
+        """
+        if len(run) < 2:
+            return run
+        (ax, ay), (bx, by) = run[-2], run[-1]
+        return list(run[:-1]) + [(ax + (bx - ax) * frac, ay + (by - ay) * frac)]
+
     if step > 0:
-        draw_route(pts[:step + 1], PATH_BLACK, dashed=False, z=route_z,
-                   width=0.10, name="oct_done")
+        draw_route(stop_short(pts[:step + 1]), PATH_BLACK, dashed=False,
+                   z=route_z, width=0.10, name="oct_done")
     if step < len(pts) - 1:
-        draw_route(pts[step:], REMAINING_PATH, dashed=True, z=route_z,
+        # The remaining run starts at the solid's cell, so trim its near end
+        # for the same reason -- reversed, since it leaves rather than arrives.
+        todo = list(reversed(stop_short(list(reversed(pts[step:])), frac=0.42)))
+        draw_route(todo, REMAINING_PATH, dashed=True, z=route_z,
                    width=0.10, name="oct_todo")
 
     # Mark the START cell. Marking the destination gives away half the answer:
