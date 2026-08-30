@@ -846,7 +846,15 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 # How much of a tile the digit's ink occupies. The UV mapping is scaled against
 # this same number, so the glyph is guaranteed to land inside the triangle it
 # belongs to rather than overhanging an edge.
-GLYPH_FRACTION = 0.34
+GLYPH_FRACTION = 0.30
+
+# How large a digit appears on a face. Larger values map the face to a larger
+# region of the tile, so the digit -- which stays a fixed share of that tile --
+# ends up *smaller* on the face. The relationship is inverse.
+#
+# This is the knob to turn for the drawn size; GLYPH_FRACTION only sets how
+# much of the atlas tile the ink occupies, which is a resolution choice.
+GLYPH_SCALE = 0.70
 
 
 # Digits come from a real font, baked to outlines ahead of time.
@@ -1004,6 +1012,15 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # so a number sits within its face with clear space around it rather
         # than crowding the edges, which on a triangular face makes it harder to
         # tell which face a digit belongs to.
+        # The face's UV square is larger than the tile -- measured at 1.71x1.48
+        # at the sizes used here -- so a face samples well past its own tile.
+        # With EXTEND that repeats whichever pixel sits on the tile edge, which
+        # is a neighbour's ink, and those bleed onto the face as dark smears.
+        #
+        # Drawing the digit small and centred keeps a wide margin of flat
+        # background on every side, so the overflow lands on that margin rather
+        # than on another digit. The margin has to be wide enough to cover the
+        # overflow, which is what GLYPH_FRACTION really buys.
         inner = int(tile * GLYPH_FRACTION)
         pad = (tile - inner) // 2
         # Blend by coverage rather than stamping solid pixels, so the curves
@@ -1030,9 +1047,54 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
     tex = nodes.new("ShaderNodeTexImage")
     tex.image = img
     tex.interpolation = "Linear"
-    # Clip, so the area outside a face's UV square shows the tile's flat
-    # background instead of repeating a neighbour's digit.
     tex.extension = "EXTEND"
+
+    # Clamp each face's UVs to its own tile before sampling.
+    #
+    # A face's UV square is bigger than its tile -- 1.71x1.48 at these sizes --
+    # so without this it samples across the tile border and picks up the
+    # neighbouring digit, which appeared as dark smears on the side faces.
+    # Clamping folds everything outside the tile back onto that tile's own flat
+    # margin, so a face can only ever show its own number.
+    uvmap = nodes.new("ShaderNodeUVMap")
+    sep_uv = nodes.new("ShaderNodeSeparateXYZ")
+    comb_uv = nodes.new("ShaderNodeCombineXYZ")
+    links.new(uvmap.outputs["UV"], sep_uv.inputs["Vector"])
+
+    # Each tile spans 1/cols by 1/rows, so clamping is done per axis against
+    # the tile the face was assigned.
+    for axis, count, out_sock in (("X", cols, "X"), ("Y", rows, "Y")):
+        scale_up = nodes.new("ShaderNodeMath")
+        scale_up.operation = "MULTIPLY"
+        scale_up.inputs[1].default_value = float(count)
+        links.new(sep_uv.outputs[axis], scale_up.inputs[0])
+
+        floor_n = nodes.new("ShaderNodeMath")
+        floor_n.operation = "FLOOR"
+        links.new(scale_up.outputs[0], floor_n.inputs[0])
+
+        frac = nodes.new("ShaderNodeMath")
+        frac.operation = "SUBTRACT"
+        links.new(scale_up.outputs[0], frac.inputs[0])
+        links.new(floor_n.outputs[0], frac.inputs[1])
+
+        clamped = nodes.new("ShaderNodeClamp")
+        clamped.inputs["Min"].default_value = 0.002
+        clamped.inputs["Max"].default_value = 0.998
+        links.new(frac.outputs[0], clamped.inputs["Value"])
+
+        back = nodes.new("ShaderNodeMath")
+        back.operation = "ADD"
+        links.new(clamped.outputs[0], back.inputs[0])
+        links.new(floor_n.outputs[0], back.inputs[1])
+
+        down = nodes.new("ShaderNodeMath")
+        down.operation = "DIVIDE"
+        down.inputs[1].default_value = float(count)
+        links.new(back.outputs[0], down.inputs[0])
+        links.new(down.outputs[0], comb_uv.inputs[out_sock])
+
+    links.new(comb_uv.outputs["Vector"], tex.inputs["Vector"])
     links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
 
     # Darken the ink back to black wherever the texture is dark.
@@ -1189,10 +1251,17 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         inradius = (2.0 * area / perim) if perim > 1e-9 else 0.0
 
         # A square of side s fits inside a circle of radius r when s <= r*sqrt2.
-        # GLYPH_FRACTION of the tile is ink, so the tile must map to a region
-        # whose inradius covers that square.
+        # The mapping is scaled so the tile's *ink area* covers that square.
+        #
+        # GLYPH_SCALE, not GLYPH_FRACTION, is what sets how large the digit
+        # looks on a face. The two used to be the same number, which made the
+        # setting inert: shrinking the glyph in the tile also shrank the region
+        # of the tile a face mapped to, so the digit kept the same share of the
+        # face. Separating them lets the drawn size be tuned on its own, with
+        # GLYPH_FRACTION left to control only how much of the tile the ink uses
+        # -- that is, its resolution.
         if inradius > 1e-9:
-            fit = (GLYPH_FRACTION / math.sqrt(2.0)) / inradius
+            fit = (GLYPH_SCALE / math.sqrt(2.0)) / inradius
         else:
             fit = 1.30 / span
 
