@@ -846,7 +846,7 @@ DIRECTIONS = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
 # How much of a tile the digit's ink occupies. The UV mapping is scaled against
 # this same number, so the glyph is guaranteed to land inside the triangle it
 # belongs to rather than overhanging an edge.
-GLYPH_FRACTION = 0.26
+GLYPH_FRACTION = 0.34
 
 
 # Digits come from a real font, baked to outlines ahead of time.
