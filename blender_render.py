@@ -972,14 +972,26 @@ def _digit_coverage(value: int, size: int):
 
 
 def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
-                           tile: int = 512):
+                           tile: int = 512, masks: Dict[int, Any] = None):
     """One material whose texture carries every face's number, in a grid atlas."""
     # 512 rather than 256: the glyph occupies a third of a tile, so the smaller
     # size left a digit only ~87px across to carry curves, and the stroke edges
     # showed even after anti-aliasing. This doubles it to ~174px.
-    slots = max(1, len(values))
-    cols = int(math.ceil(math.sqrt(slots)))
-    rows = int(math.ceil(slots / cols))
+    # Digits sit on alternate cells, with a blank cell between them.
+    #
+    # A face maps to more than its own tile -- measured spanning -0.36..1.36 in
+    # u and 0.01..1.49 in v -- so it samples across the tile border. Packed
+    # tight, that border is a neighbouring digit, and EXTEND plus Linear
+    # filtering smears it onto the face: a hard black wedge appeared at the
+    # vertex where four faces meet, and disconnecting the texture removed it
+    # entirely. Shrinking the digit only reduced the bleed (85 stray pixels at
+    # fraction 0.30, 43 at 0.24, 23 at 0.20) because the smear happens at any
+    # size. A blank cell on every side means the overrun samples flat body
+    # colour, which is what it should have been all along.
+    used = max(1, len(values))
+    span = int(math.ceil(math.sqrt(used)))
+    cols = span * 2
+    rows = int(math.ceil(used / span)) * 2
 
     img = bpy.data.images.new(name, width=tile * cols, height=tile * rows)
     # The buffer is written in the space the image is sampled in. Writing
@@ -1002,8 +1014,9 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
 
     ink = srgb_bytes(PIP_COLOR)
     for slot, (_face_index, value) in enumerate(sorted(values.items())):
-        cx = (slot % cols) * tile
-        cy = (slot // cols) * tile
+        # Every other cell, in both directions.
+        gx, gy = (slot % span) * 2, (slot // span) * 2
+        cx, cy = gx * tile, gy * tile
         # Drawn centred with a wide margin: the UV square fits the face's
         # projection, which is narrower than the tile on steeply angled faces,
         # so ink near a tile edge could fall outside the face.
@@ -1023,9 +1036,39 @@ def make_numbered_material(name: str, base_hex: str, values: Dict[int, int],
         # overflow, which is what GLYPH_FRACTION really buys.
         inner = int(tile * GLYPH_FRACTION)
         pad = (tile - inner) // 2
+
+        # Ink outside the face's own UV triangle is discarded rather than
+        # drawn.
+        #
+        # A face maps to more than its tile, so with EXTEND sampling it reaches
+        # past the tile border and picks up whatever sits there. Keeping the
+        # digit small was not enough -- shrinking it only reduced the bleed
+        # (85 stray pixels at 0.30, 43 at 0.24, 23 at 0.20) because the
+        # filtering smears across the border whatever the size. Masking to the
+        # triangle removes the cause instead: there is no ink outside the face
+        # to be smeared in the first place. Confirmed as the cause by
+        # disconnecting the texture, which took the artefact from 85 pixels to
+        # none.
+        tri = (masks or {}).get(_face_index, None)
+
+        def in_triangle(u: float, v: float) -> bool:
+            if tri is None:
+                return True
+            (ax, ay), (bx, by), (cxx, cyy) = tri
+            d = lambda px, py, qx, qy, rx, ry: ((px - rx) * (qy - ry)
+                                                - (qx - rx) * (py - ry))
+            d1 = d(u, v, ax, ay, bx, by)
+            d2 = d(u, v, bx, by, cxx, cyy)
+            d3 = d(u, v, cxx, cyy, ax, ay)
+            neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+            pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+            return not (neg and pos)
+
         # Blend by coverage rather than stamping solid pixels, so the curves
         # keep smooth edges instead of a staircase.
         for (dx, dy), a in _digit_coverage(value, inner).items():
+            if not in_triangle((pad + dx) / tile, (pad + dy) / tile):
+                continue
             x, y = cx + pad + dx, cy + pad + dy
             if 0 <= x < w and 0 <= y < h:
                 o = (y * w + x) * 4
@@ -1178,7 +1221,11 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         slot = face_slots.get(face.index)
         if slot is None:
             continue
-        cx, cy = slot % cols, slot // cols
+        # Same alternate-cell layout the atlas is painted with, so a face
+        # lands on its own digit and its overrun falls on the blank cells
+        # around it.
+        span = max(1, cols // 2)
+        cx, cy = (slot % span) * 2, (slot // span) * 2
 
         if natural:
             # Axes in the face's own plane, so the digit lies in the surface
@@ -1639,12 +1686,37 @@ def build_octahedron(cell, orientation: int, oct_, natural: bool = False) -> Non
     # picture shows is then settled by the renderer occluding the solid, the way
     # it would for a real die, rather than by this code predicting the view.
     face_values = {fi: oct_.FACE_VALUES[fi] for fi in range(len(oct_.FACES))}
+    slots = {fi: slot for slot, fi in enumerate(sorted(face_values))}
+
+    # Built in two passes: unwrap first, then paint the atlas with each face's
+    # UV triangle in hand, so the ink can be masked to the face it belongs to.
+    # Painting first would mean drawing the digits blind to where the faces
+    # actually land, which is what let ink spill onto a neighbour.
+    placeholder = make_material("oct_body_tmp", rgba(DIE_BODY))
+    obj = new_mesh_object("octahedron", verts, oct_.FACES, placeholder)
+    _span = int(math.ceil(math.sqrt(max(1, len(face_values)))))
+    cols = _span * 2
+    rows = int(math.ceil(len(face_values) / _span)) * 2
+    unwrap_faces_to_atlas(obj, slots, cols, rows, natural=natural)
+
+    masks = {}
+    uv_layer = obj.data.uv_layers.active
+    for poly in obj.data.polygons:
+        slot = slots.get(poly.index)
+        if slot is None:
+            continue
+        gspan = max(1, cols // 2)
+        tx, ty = (slot % gspan) * 2, (slot // gspan) * 2
+        masks[poly.index] = [
+            (uv_layer.data[i].uv[0] * cols - tx,
+             uv_layer.data[i].uv[1] * rows - ty)
+            for i in poly.loop_indices
+        ]
+
     body_mat, cols, rows = make_numbered_material(
-        "oct_body", DIE_BODY, face_values)
-    obj = new_mesh_object("octahedron", verts, oct_.FACES, body_mat)
-    unwrap_faces_to_atlas(
-        obj, {fi: slot for slot, fi in enumerate(sorted(face_values))},
-        cols, rows, natural=natural)
+        "oct_body", DIE_BODY, face_values, masks=masks)
+    obj.data.materials.clear()
+    obj.data.materials.append(body_mat)
 
     # Rounded edges, as on the cube. The cube reads as a real object mostly
     # because of this: a wide, many-segment bevel carries a moving highlight

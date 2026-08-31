@@ -48,37 +48,54 @@ NET_INK = PIP_COLOR
 def draw_digit(ax, value: int, cx: float, cy: float, size: float,
                color: str = NET_INK, lw_scale: float = 0.11) -> None:
     """
-    Stroke `value` centred on (cx, cy), `size` tall, in the renderer's own hand.
+    Draw `value` centred on (cx, cy), `size` tall, in the renderer's own hand.
 
-    Uses the same font the renderer bakes into the face texture
-    (`blender_render._GLYPH_FAMILY`), so there is one definition of what a
-    digit looks like across the whole dataset.
+    Uses the outlines the renderer bakes into the face texture -- the same
+    `digit_outlines.json`, not a fresh read of the font. Reading the font again
+    here gave a glyph that was very slightly different: baking flattens the
+    curves, which shifts the bounding box, and the two ended up with aspect
+    ratios of 0.768 and 0.850. Too small to see, but there is no reason for the
+    reference sheet and the frames to derive their letterforms separately.
     """
-    from matplotlib.font_manager import FontProperties
-    from matplotlib.textpath import TextPath
-    from matplotlib.patches import PathPatch
-    from matplotlib.transforms import Affine2D
+    from matplotlib.patches import Polygon as MplPoly
 
-    from blender_render import _GLYPH_FAMILY, _GLYPH_WEIGHT
+    from blender_render import _load_outlines
 
-    prop = FontProperties(family=_GLYPH_FAMILY, weight=_GLYPH_WEIGHT)
-    path = TextPath((0.0, 0.0), str(value), size=1.0, prop=prop)
-    v = path.vertices
-    if len(v) == 0:
+    contours = _load_outlines().get(value, [])
+    if not contours:
         return
-    x0, x1 = float(v[:, 0].min()), float(v[:, 0].max())
-    y0, y1 = float(v[:, 1].min()), float(v[:, 1].max())
+
+    xs = [p[0] for c in contours for p in c]
+    ys = [p[1] for c in contours for p in c]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
     gw, gh = x1 - x0, y1 - y0
     if gw <= 0 or gh <= 0:
         return
 
     s = size / max(gw, gh)
-    tr = (Affine2D()
-          .translate(-(x0 + gw / 2.0), -(y0 + gh / 2.0))
-          .scale(s)
-          .translate(cx, cy))
-    ax.add_patch(PathPatch(tr.transform_path(path), facecolor=color,
-                           edgecolor="none", zorder=6))
+    mx, my = x0 + gw / 2.0, y0 + gh / 2.0
+
+    # Each contour drawn as its own polygon. The counters -- the hole in a 6,
+    # both in an 8 -- are separate rings, so they are punched out by drawing
+    # them in the face colour over the outer ring.
+    rings = sorted(contours, key=lambda c: _ring_area(c), reverse=True)
+    for i, c in enumerate(rings):
+        pts = [((px - mx) * s + cx, (py - my) * s + cy) for px, py in c]
+        ax.add_patch(MplPoly(pts, closed=True, zorder=6 + i,
+                             facecolor=color if i == 0 else NET_FACE,
+                             edgecolor="none"))
+
+
+def _ring_area(contour) -> float:
+    """Absolute area of a closed ring, used to find the outer one."""
+    a = 0.0
+    n = len(contour)
+    for i in range(n):
+        x1, y1 = contour[i]
+        x2, y2 = contour[(i + 1) % n]
+        a += x1 * y2 - x2 * y1
+    return abs(a) / 2.0
 
 
 # ============================================================================
