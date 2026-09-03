@@ -870,7 +870,7 @@ GLYPH_SCALE = 0.70
 # module needs nothing at render time -- Blender's bundled Python has no
 # matplotlib, which is what ruled out reading the font here directly.
 _GLYPH_FAMILY = "DejaVu Sans"
-_GLYPH_WEIGHT = "bold"
+_GLYPH_WEIGHT = "normal"
 _OUTLINE_FILE = "digit_outlines.json"
 
 _DIGIT_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}

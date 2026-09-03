@@ -21,7 +21,7 @@ from matplotlib.path import Path as MPath
 from matplotlib.textpath import TextPath
 
 FAMILY = "DejaVu Sans"     # ships with matplotlib itself
-WEIGHT = "bold"
+WEIGHT = "normal"   # lighter, closer to how a real die is printed
 OUT = Path(__file__).resolve().parent / "digit_outlines.json"
 
 
