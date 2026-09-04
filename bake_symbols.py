@@ -61,11 +61,49 @@ def triangle():
 
 
 def moon():
-    """A crescent: a disc with a second disc cut out of one side."""
-    outer = _circle(0.46, 0.50, 0.42, steps=72)
-    inner = _circle(0.62, 0.50, 0.36, steps=72)
-    # The inner ring is a separate contour, so even-odd fill removes it.
-    return [outer, inner]
+    """
+    A crescent, traced as a single closed outline.
+
+    Not two circles left to an even-odd fill. That works only when the cut-out
+    lies wholly inside the disc, and a crescent's does not -- the two circles
+    overlap at the rim, and the sliver of the inner one that falls outside the
+    outer counts as inside, so the fill came out as a ring rather than a
+    crescent.
+
+    The outline is instead walked directly: along the outer arc between the two
+    intersection points, then back along the inner arc. That is the crescent's
+    actual boundary, so there is nothing for a fill rule to get wrong.
+    """
+    ox, oy, orr = 0.50, 0.50, 0.44
+    ix, iy, irr = 0.66, 0.50, 0.38
+
+    # Where the two circles cross. With centres on a horizontal line the
+    # geometry is symmetric about it.
+    d = math.hypot(ix - ox, iy - oy)
+    a = (d * d - irr * irr + orr * orr) / (2 * d)
+    h = math.sqrt(max(0.0, orr * orr - a * a))
+    mx = ox + a * (ix - ox) / d
+    my = oy + a * (iy - oy) / d
+    p1 = (mx - h * (iy - oy) / d, my + h * (ix - ox) / d)
+    p2 = (mx + h * (iy - oy) / d, my - h * (ix - ox) / d)
+
+    def ang(cx, cy, p):
+        return math.degrees(math.atan2(p[1] - cy, p[0] - cx))
+
+    o1, o2 = ang(ox, oy, p1), ang(ox, oy, p2)
+    i1, i2 = ang(ix, iy, p1), ang(ix, iy, p2)
+
+    # Outer arc the long way round -- through 180, away from the bite -- then
+    # the inner arc back the same side, which carves the concave edge. Going
+    # the short way instead traces the lens where the discs overlap, and the
+    # shape fills as a whole circle.
+    if o2 < o1:
+        o2 += 360.0                      # 57.9 -> 302.1, through the left
+    outer = _circle(ox, oy, orr, steps=64, start=o1, end=o2)
+    if i2 < i1:
+        i2 += 360.0                      # 78.8 -> 281.2, likewise
+    inner = _circle(ix, iy, irr, steps=48, start=i2, end=i1)
+    return [outer + inner]
 
 
 def star():

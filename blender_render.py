@@ -889,33 +889,80 @@ _SYMBOL_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}
 # Which set the renderer is currently drawing with.
 USE_SYMBOLS = False
 
+# Faces that carry a symbol while the rest carry digits, as a set of face
+# values. Empty means the choice is uniform and USE_SYMBOLS decides it.
+#
+# Mixing is per die rather than per face at random each frame: the marking is a
+# property of the solid, so a face that shows a heart in one frame has to show
+# a heart in every frame of that puzzle, or the pictures would contradict each
+# other about what the die is.
+MIXED_SYMBOL_FACES: set = set()
+
+
+def choose_mixed_faces(ratio: float, seed: int, values) -> set:
+    """
+    Pick which face values carry symbols, for a given ratio and seed.
+
+    Deterministic in the seed, so every frame of a puzzle marks the same faces,
+    and two runs of the same puzzle agree.
+    """
+    import random as _random
+
+    vals = sorted(values)
+    n = max(0, min(len(vals), int(round(len(vals) * ratio))))
+    return set(_random.Random(seed).sample(vals, n))
+
+
+def _load_digit_outlines() -> Dict[int, List[List[Tuple[float, float]]]]:
+    """The digit set, read once."""
+    global _DIGIT_OUTLINES
+    if _DIGIT_OUTLINES:
+        return _DIGIT_OUTLINES
+    path = Path(__file__).resolve().parent / _OUTLINE_FILE
+    with open(path) as f:
+        raw = json.load(f)
+    _DIGIT_OUTLINES = {int(k): [[(p[0], p[1]) for p in poly] for poly in v]
+                       for k, v in raw.items()}
+    return _DIGIT_OUTLINES
+
+
+def _load_symbol_outlines() -> Dict[int, List[List[Tuple[float, float]]]]:
+    """The symbol set, read once, keyed by the face value each stands for."""
+    global _SYMBOL_OUTLINES
+    if _SYMBOL_OUTLINES:
+        return _SYMBOL_OUTLINES
+    path = Path(__file__).resolve().parent / _SYMBOL_FILE
+    with open(path) as f:
+        raw = json.load(f)
+    _SYMBOL_OUTLINES = {
+        i + 1: [[(p[0], p[1]) for p in poly] for poly in raw[name]]
+        for i, name in enumerate(SYMBOL_ORDER) if name in raw
+    }
+    return _SYMBOL_OUTLINES
+
+
+def outlines_for(value: int) -> List[List[Tuple[float, float]]]:
+    """
+    The contours marking `value`, from whichever set that face uses.
+
+    A face is a symbol when it is in MIXED_SYMBOL_FACES, or when the whole die
+    is symbols. Both files hold the same thing -- closed contours filled
+    even-odd -- so everything downstream treats them identically.
+    """
+    if value in MIXED_SYMBOL_FACES or (USE_SYMBOLS and not MIXED_SYMBOL_FACES):
+        return _load_symbol_outlines().get(value, [])
+    return _load_digit_outlines().get(value, [])
+
 
 def _load_outlines() -> Dict[int, List[List[Tuple[float, float]]]]:
     """
-    Read the baked outlines for whichever mark set is selected, once.
+    Every mark, each from the set its face uses.
 
-    Both files hold the same thing -- a list of closed contours per mark,
-    filled even-odd -- so everything downstream treats digits and symbols
-    identically.
+    Kept as a dict so callers that want the whole set -- the net sheet, the
+    tests -- do not have to know how the choice is made.
     """
-    global _DIGIT_OUTLINES, _SYMBOL_OUTLINES
-
-    if USE_SYMBOLS:
-        if _SYMBOL_OUTLINES:
-            return _SYMBOL_OUTLINES
-        path = Path(__file__).resolve().parent / _SYMBOL_FILE
-        with open(path) as f:
-            raw = json.load(f)
-        # Keyed by the face value each symbol stands for, so a caller asking
-        # for "the mark for 3" gets one whichever set is loaded.
-        _SYMBOL_OUTLINES = {
-            i + 1: [[(p[0], p[1]) for p in poly] for poly in raw[name]]
-            for i, name in enumerate(SYMBOL_ORDER) if name in raw
-        }
-        return _SYMBOL_OUTLINES
-
-    if _DIGIT_OUTLINES:
-        return _DIGIT_OUTLINES
+    keys = set(_load_digit_outlines()) | set(_load_symbol_outlines())
+    return {v: outlines_for(v) for v in sorted(keys)}
     path = Path(__file__).resolve().parent / _OUTLINE_FILE
     with open(path) as f:
         raw = json.load(f)
@@ -941,11 +988,16 @@ def _digit_coverage(value: int, size: int):
     """
     # Cached: the atlas is rebuilt for every frame, but a digit's coverage
     # depends only on the value and the size, so it is computed once per run.
-    key = (value, size)
+    # The set a face uses is part of the key: the same value is a different
+    # shape depending on it, and a cache that ignored that would paint a digit
+    # where a symbol belongs.
+    is_symbol = value in MIXED_SYMBOL_FACES or (USE_SYMBOLS
+                                                and not MIXED_SYMBOL_FACES)
+    key = (value, size, is_symbol)
     if key in _COVERAGE_CACHE:
         return _COVERAGE_CACHE[key]
 
-    contours = _load_outlines().get(value, [])
+    contours = outlines_for(value)
     if not contours:
         return {}
 
@@ -962,7 +1014,7 @@ def _digit_coverage(value: int, size: int):
     # skeleton and survives being small, while a shape is read by its
     # silhouette -- a circle and a heart at digit size collapse toward the same
     # blob on a face turned away from the camera.
-    fill = 1.02 if USE_SYMBOLS else 0.92
+    fill = 1.02 if is_symbol else 0.92
     scale = min(size / gw, size / gh) * fill
     ox = (size - gw * scale) / 2.0
     oy = (size - gh * scale) / 2.0
@@ -1842,10 +1894,23 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     # Select the mark set before anything reads it. The coverage cache is keyed
     # by (value, size) alone, so it has to be dropped when the set changes or a
     # run could paint digits from a previous frame's cache onto symbol faces.
-    global USE_SYMBOLS
+    global USE_SYMBOLS, MIXED_SYMBOL_FACES
     want = bool(getattr(args, "symbols", False))
-    if want != USE_SYMBOLS:
+
+    # A ratio mixes the two sets; without one the die is uniformly digits or
+    # uniformly symbols. The faces are chosen per puzzle rather than per frame,
+    # so the marking stays a property of the die: seeded with the puzzle's own
+    # seed so two runs agree and every frame of one puzzle matches.
+    ratio = getattr(args, "symbol_ratio", None)
+    if ratio is not None:
+        seed = int(meta.get("seed", 0)) + int(getattr(args, "mix_seed", 0))
+        faces = choose_mixed_faces(ratio, seed, oct_.FACE_VALUES.values())
+    else:
+        faces = set()
+
+    if want != USE_SYMBOLS or faces != MIXED_SYMBOL_FACES:
         USE_SYMBOLS = want
+        MIXED_SYMBOL_FACES = faces
         _COVERAGE_CACHE.clear()
 
     reset_scene()
@@ -2078,6 +2143,15 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                         "instead of digits. Quicker to tell apart at a "
                         "glance, and unlike a 6 and a 9 they cannot be "
                         "confused by rotation.")
+    p.add_argument("--symbol-ratio", type=float, default=None,
+                   metavar="R",
+                   help="Mix the two markings: this fraction of the faces "
+                        "carry symbols and the rest digits (0.0-1.0). Which "
+                        "faces is drawn from --mix-seed, and is fixed for a "
+                        "puzzle so every frame of it marks the same faces.")
+    p.add_argument("--mix-seed", type=int, default=0,
+                   help="Seed choosing which faces are symbols under "
+                        "--symbol-ratio (default 0)")
     p.add_argument("--natural", action="store_true",
                    help="Octahedron: numbers aligned to the faces' own edges "
                         "rather than squared to the camera, no drawn edges, "

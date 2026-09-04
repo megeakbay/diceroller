@@ -307,6 +307,46 @@ upside down.
 So `--natural` buys realism and costs legibility. The default stays the one to
 use when a model has to read the numbers, which is what the benchmark asks.
 
+### Symbols instead of digits
+
+The octahedron's faces can carry shapes rather than numerals — heart, arrow,
+triangle, moon, star, house, circle, square:
+
+```bash
+python render_blender.py --variant octahedron --symbols
+python face_nets.py --variant octahedron --symbols --filename net_symbols.png
+```
+
+Symbols are quicker to tell apart than numerals, and unlike a 6 and a 9 they
+cannot be confused by rotation — which matters on a solid whose whole point is
+that it tumbles.
+
+`bake_symbols.py` builds them from geometry rather than a font's dingbats,
+which vary between machines and would reintroduce the portability problem
+baking was meant to solve. The output matches the digit format — closed
+contours filled even-odd — so everything downstream treats the two identically.
+
+The two can also be **mixed**, with a given fraction of the faces carrying
+symbols:
+
+```bash
+python render_blender.py --variant octahedron --symbol-ratio 0.5 --mix-seed 7
+```
+
+Which faces are symbols is seeded and fixed per puzzle, not redrawn each frame:
+the marking is a property of the die, so a face showing a heart in one frame
+must show a heart in every frame, or the pictures would contradict each other
+about what the die is.
+
+Symbols are given more of their box than digits (1.02 against 0.92). A numeral
+is read by its skeleton and survives being small; a shape is read by its
+silhouette, and a circle and a heart at digit size collapse toward the same
+blob on a face turned away from the camera.
+
+Symbol sheets are recorded in `metadata.json` as `net_symbol_image`, separately
+from `net_image`, since they describe a different marking from the one the
+frames carry.
+
 ### Lighting
 
 A three-point rig: an area key for a penumbral contact shadow, a broad sun fill,
