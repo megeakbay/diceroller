@@ -239,7 +239,7 @@ def draw_octahedron_net(ax) -> None:
                              edgecolor=NET_EDGE, linewidth=1.6))
         cx = sum(p[0] for p in pts) / 3.0
         cy = sum(p[1] for p in pts) / 3.0
-        draw_digit(ax, value, cx, cy, size=0.15)
+        draw_digit(ax, value, cx, cy, size=0.18)
 
 
 # ============================================================================

@@ -854,7 +854,7 @@ GLYPH_FRACTION = 0.30
 #
 # This is the knob to turn for the drawn size; GLYPH_FRACTION only sets how
 # much of the atlas tile the ink occupies, which is a resolution choice.
-GLYPH_SCALE = 0.70
+GLYPH_SCALE = 0.58
 
 
 # Digits come from a real font, baked to outlines ahead of time.
@@ -869,7 +869,7 @@ GLYPH_SCALE = 0.70
 # with itself, so the shapes are properly designed and reproducible, and this
 # module needs nothing at render time -- Blender's bundled Python has no
 # matplotlib, which is what ruled out reading the font here directly.
-_GLYPH_FAMILY = "DejaVu Sans"
+_GLYPH_FAMILY = "Avenir"
 _GLYPH_WEIGHT = "normal"
 _OUTLINE_FILE = "digit_outlines.json"
 

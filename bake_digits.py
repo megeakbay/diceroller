@@ -3,9 +3,14 @@ Bake the digit glyphs to `digit_outlines.json`.
 
 The renderer runs inside Blender, whose bundled Python has no matplotlib, so it
 cannot read a font at render time. Baking the outlines once here gives it
-properly designed letterforms with no runtime dependency -- and makes the
-shapes reproducible, rather than depending on whatever fonts a machine happens
-to have installed.
+properly designed letterforms with no runtime dependency.
+
+Baking also settles the portability question that pushed this toward DejaVu
+before. Avenir is a system font and will not exist everywhere, but only this
+script needs it: `digit_outlines.json` is committed, so a machine without
+Avenir still renders identical digits and only needs the font if it wants to
+re-bake. If it is missing, matplotlib falls back silently -- check the printed
+family below matches what you asked for.
 
 Run after changing the font:
 
@@ -20,13 +25,17 @@ from matplotlib.font_manager import FontProperties
 from matplotlib.path import Path as MPath
 from matplotlib.textpath import TextPath
 
-FAMILY = "DejaVu Sans"     # ships with matplotlib itself
+FAMILY = "Avenir"        # not bundled with matplotlib; see the note below
 WEIGHT = "normal"   # lighter, closer to how a real die is printed
 OUT = Path(__file__).resolve().parent / "digit_outlines.json"
 
 
 def bake() -> None:
     prop = FontProperties(family=FAMILY, weight=WEIGHT)
+    # Report what was actually resolved, since a missing family falls back
+    # without raising and would silently bake the wrong shapes.
+    from matplotlib.font_manager import findfont
+    print(f"  font: {FAMILY} {WEIGHT} -> {findfont(prop)}")
     out = {}
     for d in range(10):
         # Flattened at a high resolution: `iter_segments` with curves=False
