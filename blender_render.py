@@ -872,13 +872,48 @@ GLYPH_SCALE = 0.58
 _GLYPH_FAMILY = "Avenir"
 _GLYPH_WEIGHT = "normal"
 _OUTLINE_FILE = "digit_outlines.json"
+_SYMBOL_FILE = "symbol_outlines.json"
+
+# Marks a face can carry. Digits are the default; symbols are an alternative
+# set for when the values need telling apart at a glance rather than reading.
+#
+# A symbol also cannot be misread by rotation, which digits can: a 6 and a 9
+# are the same shape turned round, and on a solid that tumbles, that is a real
+# hazard. `bake_symbols.py` writes them, in the order face values 1..8 take.
+SYMBOL_ORDER = ["heart", "arrow", "triangle", "moon", "star", "house",
+                "circle", "square"]
 
 _DIGIT_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}
+_SYMBOL_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}
+
+# Which set the renderer is currently drawing with.
+USE_SYMBOLS = False
 
 
 def _load_outlines() -> Dict[int, List[List[Tuple[float, float]]]]:
-    """Read the baked outlines, once."""
-    global _DIGIT_OUTLINES
+    """
+    Read the baked outlines for whichever mark set is selected, once.
+
+    Both files hold the same thing -- a list of closed contours per mark,
+    filled even-odd -- so everything downstream treats digits and symbols
+    identically.
+    """
+    global _DIGIT_OUTLINES, _SYMBOL_OUTLINES
+
+    if USE_SYMBOLS:
+        if _SYMBOL_OUTLINES:
+            return _SYMBOL_OUTLINES
+        path = Path(__file__).resolve().parent / _SYMBOL_FILE
+        with open(path) as f:
+            raw = json.load(f)
+        # Keyed by the face value each symbol stands for, so a caller asking
+        # for "the mark for 3" gets one whichever set is loaded.
+        _SYMBOL_OUTLINES = {
+            i + 1: [[(p[0], p[1]) for p in poly] for poly in raw[name]]
+            for i, name in enumerate(SYMBOL_ORDER) if name in raw
+        }
+        return _SYMBOL_OUTLINES
+
     if _DIGIT_OUTLINES:
         return _DIGIT_OUTLINES
     path = Path(__file__).resolve().parent / _OUTLINE_FILE
@@ -921,8 +956,14 @@ def _digit_coverage(value: int, size: int):
     if gw <= 0 or gh <= 0:
         return {}
 
-    # Fit the glyph into the box, preserving its proportions and centring it.
-    scale = min(size / gw, size / gh) * 0.92
+    # Fit the mark into the box, preserving its proportions and centring it.
+    #
+    # Symbols get more of the box than digits. A numeral is read by its
+    # skeleton and survives being small, while a shape is read by its
+    # silhouette -- a circle and a heart at digit size collapse toward the same
+    # blob on a face turned away from the camera.
+    fill = 1.02 if USE_SYMBOLS else 0.92
+    scale = min(size / gw, size / gh) * fill
     ox = (size - gw * scale) / 2.0
     oy = (size - gh * scale) / 2.0
 
@@ -1798,6 +1839,15 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     """Build and render one octahedron frame."""
     oct_ = load_octahedron_module()
 
+    # Select the mark set before anything reads it. The coverage cache is keyed
+    # by (value, size) alone, so it has to be dropped when the set changes or a
+    # run could paint digits from a previous frame's cache onto symbol faces.
+    global USE_SYMBOLS
+    want = bool(getattr(args, "symbols", False))
+    if want != USE_SYMBOLS:
+        USE_SYMBOLS = want
+        _COVERAGE_CACHE.clear()
+
     reset_scene()
     setup_world(0.35)
 
@@ -2022,6 +2072,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                    help="Default: 1000 (cube) / 1500 (octahedron)")
     p.add_argument("--height", type=int, default=None,
                    help="Default: 1000 (cube) / 975 (octahedron)")
+    p.add_argument("--symbols", action="store_true",
+                   help="Mark the octahedron's faces with symbols (heart, "
+                        "arrow, triangle, moon, star, house, circle, square) "
+                        "instead of digits. Quicker to tell apart at a "
+                        "glance, and unlike a 6 and a 9 they cannot be "
+                        "confused by rotation.")
     p.add_argument("--natural", action="store_true",
                    help="Octahedron: numbers aligned to the faces' own edges "
                         "rather than squared to the camera, no drawn edges, "

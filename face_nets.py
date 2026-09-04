@@ -61,6 +61,8 @@ def draw_digit(ax, value: int, cx: float, cy: float, size: float,
 
     from blender_render import _load_outlines
 
+    # Reads whichever mark set the renderer is set to, so the sheet always
+    # shows what the frames show.
     contours = _load_outlines().get(value, [])
     if not contours:
         return
@@ -286,8 +288,16 @@ def draw_cube_net(ax) -> None:
 # Rendering
 # ============================================================================
 
-def render_net(variant: str, out_path: Path) -> None:
-    """Write the reference net for `variant` to `out_path`."""
+def render_net(variant: str, out_path: Path, symbols: bool = False) -> None:
+    """
+    Write the reference net for `variant` to `out_path`.
+
+    With `symbols`, the octahedron's faces carry shapes instead of digits --
+    the same marks `--symbols` puts on the rendered die, so the sheet keeps
+    matching the pictures it describes.
+    """
+    import blender_render as _br
+    _br.USE_SYMBOLS = bool(symbols) and variant == "octahedron"
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.set_aspect("equal")
     ax.axis("off")
@@ -307,7 +317,7 @@ def render_net(variant: str, out_path: Path) -> None:
 
 
 def write_nets(output_dir: Path, variant: str = "all",
-               filename: str = "net.png") -> int:
+               filename: str = "net.png", symbols: bool = False) -> int:
     """
     Write the reference net into every puzzle directory under `output_dir`.
 
@@ -334,7 +344,7 @@ def write_nets(output_dir: Path, variant: str = "all",
             continue
 
         master = vdir / filename
-        render_net(v, master)
+        render_net(v, master, symbols=symbols)
         for p in puzzles:
             shutil.copyfile(master, p / filename)
             written += 1
@@ -345,8 +355,13 @@ def write_nets(output_dir: Path, variant: str = "all",
             if meta_path.exists():
                 with open(meta_path) as f:
                     meta = json.load(f)
-                if meta.get("net_image") != filename:
-                    meta["net_image"] = filename
+                # Symbol sheets are recorded separately: they describe an
+                # alternative marking, not the one the frames carry, so
+                # overwriting net_image with them would point a consumer at a
+                # sheet that disagrees with its pictures.
+                key = "net_symbol_image" if symbols else "net_image"
+                if meta.get(key) != filename:
+                    meta[key] = filename
                     with open(meta_path, "w") as f:
                         json.dump(meta, f, indent=2)
         print(f"  {v}: {filename} in {len(puzzles)} puzzle(s)")
@@ -362,9 +377,13 @@ def main() -> None:
     ap.add_argument("--variant", default="all",
                     help="top, sum, two, octahedron, or all")
     ap.add_argument("--filename", default="net.png")
+    ap.add_argument("--symbols", action="store_true",
+                    help="Draw the octahedron's faces with symbols rather "
+                         "than digits, matching render_blender.py --symbols")
     args = ap.parse_args()
 
-    n = write_nets(Path(args.output_dir), args.variant, args.filename)
+    n = write_nets(Path(args.output_dir), args.variant, args.filename,
+                   symbols=args.symbols)
     print(f"\nWrote {n} net image(s).")
 
 
