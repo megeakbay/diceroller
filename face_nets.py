@@ -288,16 +288,19 @@ def draw_cube_net(ax) -> None:
 # Rendering
 # ============================================================================
 
-def render_net(variant: str, out_path: Path, symbols: bool = False) -> None:
+def render_net(variant: str, out_path: Path, symbols: bool = False,
+               mixed_faces=None) -> None:
     """
     Write the reference net for `variant` to `out_path`.
 
-    With `symbols`, the octahedron's faces carry shapes instead of digits --
-    the same marks `--symbols` puts on the rendered die, so the sheet keeps
-    matching the pictures it describes.
+    With `symbols`, the octahedron's faces carry shapes instead of digits. With
+    `mixed_faces`, only those face values do -- matching what `--symbol-ratio`
+    put on the die, so the sheet keeps describing the pictures it accompanies
+    rather than a differently marked solid.
     """
     import blender_render as _br
     _br.USE_SYMBOLS = bool(symbols) and variant == "octahedron"
+    _br.MIXED_SYMBOL_FACES = set(mixed_faces or ())
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.set_aspect("equal")
     ax.axis("off")
@@ -317,7 +320,8 @@ def render_net(variant: str, out_path: Path, symbols: bool = False) -> None:
 
 
 def write_nets(output_dir: Path, variant: str = "all",
-               filename: str = "net.png", symbols: bool = False) -> int:
+               filename: str = "net.png", symbols: bool = False,
+               symbol_ratio: float = None, mix_seed: int = 0) -> int:
     """
     Write the reference net into every puzzle directory under `output_dir`.
 
@@ -343,10 +347,26 @@ def write_nets(output_dir: Path, variant: str = "all",
         if not puzzles:
             continue
 
-        master = vdir / filename
-        render_net(v, master, symbols=symbols)
+        # A mixed sheet depends on the puzzle's own seed, so unlike the
+        # uniform ones it cannot be drawn once and copied.
+        per_puzzle = symbol_ratio is not None and v == "octahedron"
+
+        master = None
+        if not per_puzzle:
+            master = vdir / filename
+            render_net(v, master, symbols=symbols)
+
         for p in puzzles:
-            shutil.copyfile(master, p / filename)
+            if per_puzzle:
+                import blender_render as _br
+                import octahedron as _oct
+                with open(p / "metadata.json") as f:
+                    seed = int(json.load(f).get("seed", 0))
+                faces = _br.choose_mixed_faces(symbol_ratio, seed + mix_seed,
+                                               _oct.FACE_VALUES.values())
+                render_net(v, p / filename, symbols=True, mixed_faces=faces)
+            else:
+                shutil.copyfile(master, p / filename)
             written += 1
 
             # Record it in the puzzle's metadata, so a consumer finds the net
@@ -380,10 +400,16 @@ def main() -> None:
     ap.add_argument("--symbols", action="store_true",
                     help="Draw the octahedron's faces with symbols rather "
                          "than digits, matching render_blender.py --symbols")
+    ap.add_argument("--symbol-ratio", type=float, default=None, metavar="R",
+                    help="Mixed marking: this fraction of faces carry "
+                         "symbols, matching render_blender.py --symbol-ratio")
+    ap.add_argument("--mix-seed", type=int, default=0,
+                    help="Seed for --symbol-ratio, matching the renderer's")
     args = ap.parse_args()
 
     n = write_nets(Path(args.output_dir), args.variant, args.filename,
-                   symbols=args.symbols)
+                   symbols=args.symbols, symbol_ratio=args.symbol_ratio,
+                   mix_seed=args.mix_seed)
     print(f"\nWrote {n} net image(s).")
 
 
