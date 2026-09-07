@@ -310,7 +310,7 @@ use when a model has to read the numbers, which is what the benchmark asks.
 ### Symbols instead of digits
 
 The octahedron's faces can carry shapes rather than numerals — heart, arrow,
-triangle, moon, star, house, circle, square:
+triangle, moon, star, cross, circle, square:
 
 ```bash
 python render_blender.py --variant octahedron --symbols

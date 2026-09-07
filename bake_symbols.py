@@ -27,7 +27,7 @@ OUT = Path(__file__).resolve().parent / "symbol_outlines.json"
 
 # The seven symbols, in the order face values 1..8 are assigned. Eight faces
 # need eight marks, so the set is these seven plus a square.
-SYMBOL_ORDER = ["heart", "arrow", "triangle", "moon", "star", "house",
+SYMBOL_ORDER = ["heart", "arrow", "triangle", "moon", "star", "cross",
                 "circle", "square"]
 
 
@@ -116,16 +116,20 @@ def star():
     return [pts]
 
 
-def house():
-    """A square with a gable on top.
+def cross():
+    """A plus sign.
 
-    The eaves overhang the walls only slightly. Drawn wider it read as an
-    arrow rather than a house, which matters here: the two are in the same
-    set and have to stay distinguishable at a glance.
+    Replaces a house, which shared too much of its outline with the arrow and
+    the triangle: all three are a peak over a body, and at the size a face gets
+    they collapsed toward each other. A cross has no peak and no round side, so
+    it is the one shape in the set that resembles none of the others.
     """
+    t = 0.16
     return [[
-        (0.50, 0.95), (0.92, 0.58), (0.84, 0.58), (0.84, 0.08),
-        (0.16, 0.08), (0.16, 0.58), (0.08, 0.58),
+        (0.5 - t, 0.10), (0.5 + t, 0.10), (0.5 + t, 0.5 - t),
+        (0.90, 0.5 - t), (0.90, 0.5 + t), (0.5 + t, 0.5 + t),
+        (0.5 + t, 0.90), (0.5 - t, 0.90), (0.5 - t, 0.5 + t),
+        (0.10, 0.5 + t), (0.10, 0.5 - t), (0.5 - t, 0.5 - t),
     ]]
 
 
@@ -139,7 +143,7 @@ def square():
 
 BUILDERS = {
     "heart": heart, "arrow": arrow, "triangle": triangle, "moon": moon,
-    "star": star, "house": house, "circle": circle, "square": square,
+    "star": star, "cross": cross, "circle": circle, "square": square,
 }
 
 

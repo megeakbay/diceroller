@@ -900,7 +900,7 @@ _SYMBOL_FILE = "symbol_outlines.json"
 # A symbol also cannot be misread by rotation, which digits can: a 6 and a 9
 # are the same shape turned round, and on a solid that tumbles, that is a real
 # hazard. `bake_symbols.py` writes them, in the order face values 1..8 take.
-SYMBOL_ORDER = ["heart", "arrow", "triangle", "moon", "star", "house",
+SYMBOL_ORDER = ["heart", "arrow", "triangle", "moon", "star", "cross",
                 "circle", "square"]
 
 _DIGIT_OUTLINES: Dict[int, List[List[Tuple[float, float]]]] = {}
@@ -2310,7 +2310,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                    help="Default: 1000 (cube) / 975 (octahedron)")
     p.add_argument("--symbols", action="store_true",
                    help="Mark the octahedron's faces with symbols (heart, "
-                        "arrow, triangle, moon, star, house, circle, square) "
+                        "arrow, triangle, moon, star, cross, circle, square) "
                         "instead of digits. Quicker to tell apart at a "
                         "glance, and unlike a 6 and a 9 they cannot be "
                         "confused by rotation.")
