@@ -92,8 +92,12 @@ def check_camera_matches_2d() -> None:
     print("\ncamera derivation")
     el, az = br._camera_from_basis(br.CUBE_BASIS)
     check("cube elevation ~29.5 deg", abs(el - 29.496) < 0.01, f"{el:.3f}")
-    check("octahedron renders from 26 deg, above its 2D basis",
-          abs(br.OCT_ELEVATION - 26.0) < 0.01, f"{br.OCT_ELEVATION:.3f}")
+    # The octahedron is now viewed from the cube's own elevation, so the two
+    # solids are seen from exactly the same point rather than the octahedron
+    # being lower and reading as a side-on view.
+    check("octahedron matches the cube's elevation",
+          abs(br.OCT_ELEVATION - el) < 0.01,
+          f"oct {br.OCT_ELEVATION:.3f} vs cube {el:.3f}")
     check("both share the same azimuth", abs(az - (-135.0)) < 0.01, f"{az:.3f}")
 
     # A cube corner must not collapse onto another under this projection --

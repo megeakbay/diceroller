@@ -149,7 +149,19 @@ _OCT_BASIS_ELEVATION, OCT_AZIMUTH = _camera_from_basis(OCT_BASIS)
 # degrees the two faces angled away from the camera widen noticeably (they keep
 # only ~28% of their width at 26 degrees), at the cost of looking down on the
 # board rather than across it. `--elevation` overrides it per run.
-OCT_ELEVATION = 26.0
+OCT_ELEVATION = 29.496
+
+# Orthographic width the octahedron is framed at, for every puzzle.
+#
+# Set to what frames the widest cropped board in the dataset, so nothing is cut
+# off and, more importantly, the die is drawn at one constant size -- deriving
+# it per puzzle made the solid change scale between frames a reader is meant to
+# compare, varying between 7.12 and 8.90.
+#
+# Sized for the margin=4 lattice in octahedron._board_near_path, whose widest
+# board measures 7.90 units. Narrowing that margin without narrowing this leaves
+# the die small in a lot of empty space.
+OCT_ORTHO_SCALE = 11.80
 
 
 # Where setup_camera last placed the camera, and what it was aimed at. Read
@@ -1483,15 +1495,92 @@ def build_cube_board(board: Dict[str, Any]) -> None:
         )
 
 
-def build_die(position: Sequence[int], die: Dict[str, int]) -> Any:
+def _paint_cube_symbols(cube, die: Dict[str, int]) -> None:
     """
-    A real cube with pips on all six faces.
+    Paint the cube's faces with symbols from the shared atlas.
 
-    Pips are spheres pressed slightly into each face rather than painted
-    circles, so they catch the lighting and stay legible at the angles the
-    faces are seen from. Only three faces can be seen at once -- that is the
-    camera's doing, not a choice made here, which is exactly why the invariant
-    is safe: no drawing decision can accidentally expose a fourth.
+    Each face gets a tile, laid out in the face's own plane with axes taken
+    from the camera, so a symbol stands the same way up on all six. A cube's
+    faces are square and its normals axis-aligned, so this is simpler than the
+    octahedron's version -- but it is the same idea, and it has to be done the
+    same way: assigning tile corners in the polygon's own winding turns each
+    face's mark differently, because the six faces are wound independently of
+    how the camera sees them.
+    """
+    values = {i: v for i, v in enumerate(
+        [die["top"], die["bottom"], die["north"], die["south"],
+         die["east"], die["west"]])}
+
+    mat, cols, rows = make_numbered_material("die_body", DIE_BODY, values)
+    cube.data.materials.clear()
+    cube.data.materials.append(mat)
+
+    # Which face carries which value, by its outward normal -- not by polygon
+    # index, which depends on how Blender happens to wind the primitive.
+    by_normal = {
+        (0, 0, 1): 0, (0, 0, -1): 1, (0, 1, 0): 2,
+        (0, -1, 0): 3, (1, 0, 0): 4, (-1, 0, 0): 5,
+    }
+    slots = {i: slot for slot, i in enumerate(sorted(values))}
+
+    bm = bmesh.new()
+    bm.from_mesh(cube.data)
+    uv = bm.loops.layers.uv.verify()
+    bm.faces.ensure_lookup_table()
+
+    cam_right, cam_up = camera_frame()
+    span = max(1, cols // 2)
+
+    for poly in bm.faces:
+        n = poly.normal
+        key = (round(n.x), round(n.y), round(n.z))
+        idx = by_normal.get(key)
+        if idx is None:
+            continue
+        gx, gy = (slots[idx] % span) * 2, (slots[idx] // span) * 2
+
+        n_vec = Vector((float(key[0]), float(key[1]), float(key[2])))
+        axis_v = cam_up - n_vec * cam_up.dot(n_vec)
+        if axis_v.length < 1e-6:
+            axis_v = cam_right - n_vec * cam_right.dot(n_vec)
+        axis_v.normalize()
+        axis_u = axis_v.cross(n_vec).normalized()
+        # Right-handed about the outward normal, or the mark is mirrored.
+        if axis_u.cross(axis_v).dot(n_vec) < 0:
+            axis_u = -axis_u
+
+        pts = [(l.vert.co.dot(axis_u), l.vert.co.dot(axis_v), l)
+               for l in poly.loops]
+        us = [p[0] for p in pts]
+        vs = [p[1] for p in pts]
+        du = (max(us) - min(us)) or 1.0
+        dv = (max(vs) - min(vs)) or 1.0
+        # The face maps to a window of the tile sized so the mark comes out the
+        # same size on a cube face as on an octahedron face.
+        lo, wide = 0.21, 0.58
+        for pu, pv, loop in pts:
+            u_ = lo + wide * (pu - min(us)) / du
+            v_ = lo + wide * (pv - min(vs)) / dv
+            loop[uv].uv = ((gx + u_) / cols, (gy + v_) / rows)
+
+    bm.to_mesh(cube.data)
+    bm.free()
+
+
+def build_die(position: Sequence[int], die: Dict[str, int],
+              symbols: bool = False) -> Any:
+    """
+    A real cube, marked with pips or with symbols.
+
+    Pips are the default: spheres pressed slightly into each face rather than
+    painted circles, so they catch the lighting and stay legible at the angles
+    the faces are seen from. With `symbols` the faces are painted from the same
+    baked outlines the octahedron uses, so a cube and an octahedron marked with
+    symbols look alike.
+
+    Only three faces can be seen at once -- that is the camera's doing, not a
+    choice made here, which is exactly why the invariant is safe: no drawing
+    decision can accidentally expose a fourth.
     """
     inset = 0.04
     s = 1.0 - 2 * inset
@@ -1555,6 +1644,10 @@ def build_die(position: Sequence[int], die: Dict[str, int]) -> Any:
         (die["west"],   (-half,  half, -half), (0, -s, 0), (0, 0, s), (-1, 0, 0)),
     ]
 
+    if symbols:
+        _paint_cube_symbols(cube, die)
+        return cube
+
     for value, origin, u, v, normal in faces:
         for i, (px, py) in enumerate(PIP_LAYOUT[value]):
             lx = origin[0] + u[0] * px + v[0] * py
@@ -1596,6 +1689,15 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
     """Build and render one cube frame."""
     reset_scene()
     setup_world()
+
+    # Select the mark set before anything reads it, as the octahedron does.
+    # Without this the cube would ask for symbols and be handed digits, since
+    # the atlas is built from whichever set this flag names.
+    global USE_SYMBOLS
+    want = bool(getattr(args, "symbols", False))
+    if want != USE_SYMBOLS:
+        USE_SYMBOLS = want
+        _COVERAGE_CACHE.clear()
 
     board = meta["board"]
     bw, bh = board["width"], board["height"]
@@ -1656,7 +1758,8 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
     add_contact_shadow("die_shadow", (px + 0.5, py + 0.5), size=2.1,
                        strength=0.32, spread=0.42, offset=(-0.12, -0.12))
 
-    build_die(entry["position"], entry["die"])
+    build_die(entry["position"], entry["die"],
+              symbols=bool(getattr(args, "symbols", False)))
 
     target = (bw / 2.0, bh / 2.0, 0.0)
     # Fit the board's diagonal, plus room for a die standing at a far corner.
@@ -1979,7 +2082,15 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     xs = [c[0] for c in [cell["centre"] for cell in board.values()]]
     ys = [c[1] for c in [cell["centre"] for cell in board.values()]]
     target = ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0, 0.35)
-    ortho = max(max(xs) - min(xs), 3.0) * 1.30 + 1.5
+    # A fixed framing, not one derived from this puzzle's board.
+    #
+    # The board is cropped to the neighbourhood of each puzzle's path, so its
+    # width varies -- measured 4.32 to 5.69 across the set, which put the
+    # ortho scale between 7.12 and 8.90 and made the die noticeably larger in
+    # some frames than others. Since these are meant to be compared with each
+    # other, the scale is pinned to what frames the widest board in the set,
+    # so a die is the same size in every picture.
+    ortho = OCT_ORTHO_SCALE
 
     # Camera before the solid: the face labels are rolled against the camera's
     # up axis so they read upright on screen, which needs the camera in place.

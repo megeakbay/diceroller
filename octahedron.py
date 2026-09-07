@@ -480,7 +480,7 @@ def _outward(verts: np.ndarray, fi: int) -> Tuple[np.ndarray, np.ndarray]:
 
 
 
-def _board_near_path(trace, radius, margin: int = 2):
+def _board_near_path(trace, radius, margin: int = 4):
     """
     The cells worth drawing: those near the path, but never so few that the
     solid ends up hanging over an edge of the cropped board.

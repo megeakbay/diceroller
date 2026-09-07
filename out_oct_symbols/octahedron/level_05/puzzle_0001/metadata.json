@@ -1,0 +1,345 @@
+{
+  "solid": "octahedron",
+  "faces": 8,
+  "grid": "triangular",
+  "seed": 42,
+  "num_rolls": 5,
+  "steps": [
+    {
+      "step": 1,
+      "path": null,
+      "lattice_step": [
+        -0.789,
+        0.211
+      ],
+      "direction_name": "left",
+      "from_cell": [
+        0.0,
+        0.0
+      ],
+      "to_cell": [
+        -0.79,
+        0.21
+      ],
+      "faces_before": {
+        "bottom": 6,
+        "opposite_the_bottom": 3,
+        "visible_sides": [
+          5,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          4
+        ]
+      },
+      "faces_after": {
+        "bottom": 5,
+        "opposite_the_bottom": 4,
+        "visible_sides": [
+          3,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          6
+        ]
+      },
+      "bottom_face": 5
+    },
+    {
+      "step": 2,
+      "path": null,
+      "lattice_step": [
+        -0.211,
+        0.789
+      ],
+      "direction_name": "up-left",
+      "from_cell": [
+        -0.79,
+        0.21
+      ],
+      "to_cell": [
+        -1.0,
+        1.0
+      ],
+      "faces_before": {
+        "bottom": 5,
+        "opposite_the_bottom": 4,
+        "visible_sides": [
+          3,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          6
+        ]
+      },
+      "faces_after": {
+        "bottom": 2,
+        "opposite_the_bottom": 7,
+        "visible_sides": [
+          3,
+          5,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          4,
+          6
+        ]
+      },
+      "bottom_face": 2
+    },
+    {
+      "step": 3,
+      "path": null,
+      "lattice_step": [
+        -0.789,
+        0.211
+      ],
+      "direction_name": "left",
+      "from_cell": [
+        -1.0,
+        1.0
+      ],
+      "to_cell": [
+        -1.79,
+        1.21
+      ],
+      "faces_before": {
+        "bottom": 2,
+        "opposite_the_bottom": 7,
+        "visible_sides": [
+          3,
+          5,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          4,
+          6
+        ]
+      },
+      "faces_after": {
+        "bottom": 3,
+        "opposite_the_bottom": 6,
+        "visible_sides": [
+          5,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          4
+        ]
+      },
+      "bottom_face": 3
+    },
+    {
+      "step": 4,
+      "path": null,
+      "lattice_step": [
+        -0.211,
+        0.789
+      ],
+      "direction_name": "up-left",
+      "from_cell": [
+        -1.79,
+        1.21
+      ],
+      "to_cell": [
+        -2.0,
+        2.0
+      ],
+      "faces_before": {
+        "bottom": 3,
+        "opposite_the_bottom": 6,
+        "visible_sides": [
+          5,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          4
+        ]
+      },
+      "faces_after": {
+        "bottom": 4,
+        "opposite_the_bottom": 5,
+        "visible_sides": [
+          3,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          6
+        ]
+      },
+      "bottom_face": 4
+    },
+    {
+      "step": 5,
+      "path": null,
+      "lattice_step": [
+        -0.789,
+        0.211
+      ],
+      "direction_name": "left",
+      "from_cell": [
+        -2.0,
+        2.0
+      ],
+      "to_cell": [
+        -2.79,
+        2.21
+      ],
+      "faces_before": {
+        "bottom": 4,
+        "opposite_the_bottom": 5,
+        "visible_sides": [
+          3,
+          7,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          2,
+          6
+        ]
+      },
+      "faces_after": {
+        "bottom": 7,
+        "opposite_the_bottom": 2,
+        "visible_sides": [
+          3,
+          5,
+          8
+        ],
+        "hidden_sides": [
+          1,
+          4,
+          6
+        ]
+      },
+      "bottom_face": 7
+    }
+  ],
+  "face_values": {
+    "0": 1,
+    "6": 8,
+    "1": 2,
+    "7": 7,
+    "2": 3,
+    "4": 6,
+    "3": 4,
+    "5": 5
+  },
+  "start": [
+    0.0,
+    0.0
+  ],
+  "path": [
+    [
+      -0.789,
+      0.211
+    ],
+    [
+      -0.211,
+      0.789
+    ],
+    [
+      -0.789,
+      0.211
+    ],
+    [
+      -0.211,
+      0.789
+    ],
+    [
+      -0.789,
+      0.211
+    ]
+  ],
+  "trace": [
+    {
+      "cell": [
+        0.0,
+        0.0
+      ],
+      "orientation": 0,
+      "bottom": 6
+    },
+    {
+      "cell": [
+        -0.79,
+        0.21
+      ],
+      "orientation": 3,
+      "bottom": 5
+    },
+    {
+      "cell": [
+        -1.0,
+        1.0
+      ],
+      "orientation": 8,
+      "bottom": 2
+    },
+    {
+      "cell": [
+        -1.79,
+        1.21
+      ],
+      "orientation": 15,
+      "bottom": 3
+    },
+    {
+      "cell": [
+        -2.0,
+        2.0
+      ],
+      "orientation": 6,
+      "bottom": 4
+    },
+    {
+      "cell": [
+        -2.79,
+        2.21
+      ],
+      "orientation": 2,
+      "bottom": 7
+    }
+  ],
+  "answer": 7,
+  "board_radius": [
+    4.6,
+    4.0
+  ],
+  "puzzle_id": 1,
+  "level": 5,
+  "variant": "octahedron",
+  "question": "If the die is rolled along the shown path, what number will be face down at the end?",
+  "num_cot_images": 5,
+  "initial_state_image": "initial.png",
+  "cot_images": [
+    "cot_00.png",
+    "cot_01.png",
+    "cot_02.png",
+    "cot_03.png",
+    "cot_04.png"
+  ],
+  "net_image": "net.png",
+  "net_symbol_image": "net_symbols.png"
+}
