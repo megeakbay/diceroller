@@ -149,7 +149,12 @@ _OCT_BASIS_ELEVATION, OCT_AZIMUTH = _camera_from_basis(OCT_BASIS)
 # degrees the two faces angled away from the camera widen noticeably (they keep
 # only ~28% of their width at 26 degrees), at the cost of looking down on the
 # board rather than across it. `--elevation` overrides it per run.
-OCT_ELEVATION = 29.496
+#
+# It was briefly set to the cube's 29.496 so the two solids were seen from one
+# point. That is tidier in principle and worse in practice here: it flattens
+# the lattice further and buys nothing the shallower angle does not already
+# give, so it is back to the value the rest of the framing was tuned around.
+OCT_ELEVATION = 26.0
 
 # Orthographic width the octahedron is framed at, for every puzzle.
 #
@@ -158,10 +163,13 @@ OCT_ELEVATION = 29.496
 # it per puzzle made the solid change scale between frames a reader is meant to
 # compare, varying between 7.12 and 8.90.
 #
-# Sized for the margin=4 lattice in octahedron._board_near_path, whose widest
-# board measures 7.90 units. Narrowing that margin without narrowing this leaves
-# the die small in a lot of empty space.
-OCT_ORTHO_SCALE = 11.80
+# Sized for the margin=2 lattice in octahedron._board_near_path, whose widest
+# board measures 5.69 units. The two move together: widening the margin without
+# widening this crops the lattice, and widening this without the margin leaves
+# the die small in a lot of empty space -- at margin=4 and ortho 11.80 the die
+# fell from 49% of the frame's width to 36%, which is what made it hard to
+# read.
+OCT_ORTHO_SCALE = 8.90
 
 
 # Where setup_camera last placed the camera, and what it was aimed at. Read
@@ -1563,35 +1571,25 @@ def _paint_cube_symbols(cube, die: Dict[str, int]) -> None:
                for l in poly.loops]
         us = [p[0] for p in pts]
         vs = [p[1] for p in pts]
-        du = (max(us) - min(us)) or 1.0
-        dv = (max(vs) - min(vs)) or 1.0
 
-        # Counter the foreshortening of this face on screen.
+        # One scale for both axes, about the face's own centre -- the same
+        # fitting the octahedron uses.
         #
-        # Fitting the face's own square to a square window paints a mark that
-        # is then squashed by however much the projection flattens that face.
-        # The cube's top face is the bad case: measured, it projects 3.05 times
-        # wider than tall, so a circle drawn on it came out a flat ellipse and
-        # a heart a smear. Stretching the window by the same ratio cancels it,
-        # and the mark reads as the shape it is meant to be. The two side faces
-        # measure 1.01 and are left alone by the same formula.
-        su = math.hypot(axis_u.dot(cam_right), axis_u.dot(cam_up))
-        sv = math.hypot(axis_v.dot(cam_right), axis_v.dot(cam_up))
-        squash = (su / sv) if sv > 1e-9 else 1.0
-
-        # The face maps to a window of the tile sized so the mark comes out the
-        # same size on a cube face as on an octahedron face.
-        wide_u, wide_v = 0.58, 0.58
-        if squash > 1.0:
-            wide_v = min(0.92, wide_v * squash)     # tall face: stretch v
-        else:
-            wide_u = min(0.92, wide_u / max(squash, 1e-6))
-        lo_u = 0.5 - wide_u / 2.0
-        lo_v = 0.5 - wide_v / 2.0
+        # Normalising u and v separately was tried, each against its own span,
+        # with a further stretch meant to undo the projection's foreshortening.
+        # That is what bent the marks: dividing by two different spans discards
+        # the face's proportions outright, so a square became a rhombus however
+        # the stretch was tuned. Scaling both axes by one number keeps the
+        # face's shape and lets the projection do what it does to it, which is
+        # what makes the octahedron's symbols read correctly.
+        mid_u = sum(us) / len(us)
+        mid_v = sum(vs) / len(vs)
+        half = max(max(us) - min(us), max(vs) - min(vs)) / 2.0 or 1.0
+        fit = 0.29 / half          # window half-width in tile units
 
         for pu, pv, loop in pts:
-            u_ = lo_u + wide_u * (pu - min(us)) / du
-            v_ = lo_v + wide_v * (pv - min(vs)) / dv
+            u_ = 0.5 + (pu - mid_u) * fit
+            v_ = 0.5 + (pv - mid_v) * fit
             loop[uv].uv = ((gx + u_) / cols, (gy + v_) / rows)
 
     bm.to_mesh(cube.data)
