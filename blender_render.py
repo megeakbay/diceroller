@@ -1417,6 +1417,16 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         else:
             fit = 1.30 / span
 
+        # No aspect correction here.
+        #
+        # Undoing each face's foreshortening was tried, to keep a circle round
+        # and a square square. It fixes the two faces turned toward the camera
+        # and wrecks the rest: measured across all 24 orientations it left 38%
+        # of visible faces outside a 0.6-1.6 aspect, against a projection that
+        # is at least consistent. A symbol on an oblique face is squashed
+        # because the face is, which reads as perspective rather than as a
+        # drawing error.
+
         for loop, (pu, pv) in zip(face.loops, pts):
             u = 0.5 + (pu - mid_u) * fit
             v = 0.5 + (pv - mid_v) * fit
