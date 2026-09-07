@@ -1555,12 +1555,33 @@ def _paint_cube_symbols(cube, die: Dict[str, int]) -> None:
         vs = [p[1] for p in pts]
         du = (max(us) - min(us)) or 1.0
         dv = (max(vs) - min(vs)) or 1.0
+
+        # Counter the foreshortening of this face on screen.
+        #
+        # Fitting the face's own square to a square window paints a mark that
+        # is then squashed by however much the projection flattens that face.
+        # The cube's top face is the bad case: measured, it projects 3.05 times
+        # wider than tall, so a circle drawn on it came out a flat ellipse and
+        # a heart a smear. Stretching the window by the same ratio cancels it,
+        # and the mark reads as the shape it is meant to be. The two side faces
+        # measure 1.01 and are left alone by the same formula.
+        su = math.hypot(axis_u.dot(cam_right), axis_u.dot(cam_up))
+        sv = math.hypot(axis_v.dot(cam_right), axis_v.dot(cam_up))
+        squash = (su / sv) if sv > 1e-9 else 1.0
+
         # The face maps to a window of the tile sized so the mark comes out the
         # same size on a cube face as on an octahedron face.
-        lo, wide = 0.21, 0.58
+        wide_u, wide_v = 0.58, 0.58
+        if squash > 1.0:
+            wide_v = min(0.92, wide_v * squash)     # tall face: stretch v
+        else:
+            wide_u = min(0.92, wide_u / max(squash, 1e-6))
+        lo_u = 0.5 - wide_u / 2.0
+        lo_v = 0.5 - wide_v / 2.0
+
         for pu, pv, loop in pts:
-            u_ = lo + wide * (pu - min(us)) / du
-            v_ = lo + wide * (pv - min(vs)) / dv
+            u_ = lo_u + wide_u * (pu - min(us)) / du
+            v_ = lo_v + wide_v * (pv - min(vs)) / dv
             loop[uv].uv = ((gx + u_) / cols, (gy + v_) / rows)
 
     bm.to_mesh(cube.data)

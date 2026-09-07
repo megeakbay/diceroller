@@ -248,13 +248,14 @@ def draw_octahedron_net(ax) -> None:
 # Cube
 # ============================================================================
 
-def draw_cube_net(ax) -> None:
+def draw_cube_net(ax, symbols: bool = False) -> None:
     """
-    The six-faced die, unfolded in a cross, with pips rather than numerals.
+    The six-faced die, unfolded in a cross.
 
-    The cube's faces carry pips in the render, so the net carries pips too --
-    a reference sheet that used a different notation from the pictures would
-    make the reader translate before they could use it.
+    Carries whatever the render carries: pips by default, symbols when the die
+    was rendered with them. A reference sheet using a different notation from
+    the pictures would make the reader translate before they could use it --
+    which is exactly what a pips-only sheet did beside a symbol-marked cube.
     """
     from generator import canonical_die
 
@@ -279,9 +280,12 @@ def draw_cube_net(ax) -> None:
         ax.add_patch(Polygon(
             [(x0, y0), (x0 + 1, y0), (x0 + 1, y0 + 1), (x0, y0 + 1)],
             closed=True, facecolor=NET_FACE, edgecolor=NET_EDGE, linewidth=1.6))
-        for px, py in _PIP_LAYOUT[value]:
-            ax.add_patch(plt.Circle((x0 + px, y0 + py), 0.075,
-                                    color=NET_INK, zorder=5))
+        if symbols:
+            draw_digit(ax, value, x0 + 0.5, y0 + 0.5, size=0.44)
+        else:
+            for px, py in _PIP_LAYOUT[value]:
+                ax.add_patch(plt.Circle((x0 + px, y0 + py), 0.075,
+                                        color=NET_INK, zorder=5))
 
 
 # ============================================================================
@@ -299,7 +303,9 @@ def render_net(variant: str, out_path: Path, symbols: bool = False,
     rather than a differently marked solid.
     """
     import blender_render as _br
-    _br.USE_SYMBOLS = bool(symbols) and variant == "octahedron"
+    # Symbols apply to either solid; the octahedron uses them in place of its
+    # digits, the cube in place of its pips.
+    _br.USE_SYMBOLS = bool(symbols)
     _br.MIXED_SYMBOL_FACES = set(mixed_faces or ())
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.set_aspect("equal")
@@ -308,7 +314,7 @@ def render_net(variant: str, out_path: Path, symbols: bool = False,
     if variant == "octahedron":
         draw_octahedron_net(ax)
     else:
-        draw_cube_net(ax)
+        draw_cube_net(ax, symbols=bool(symbols))
 
     # No caption. The opposite-face rule is already stated in the prompts, so
     # repeating it here would only be words for a reader that is being shown a
