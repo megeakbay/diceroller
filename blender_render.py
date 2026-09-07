@@ -1557,12 +1557,40 @@ def _paint_cube_symbols(cube, die: Dict[str, int]) -> None:
             continue
         gx, gy = (slots[idx] % span) * 2, (slots[idx] // span) * 2
 
+        # Axes along the face's own edges, not from the camera.
+        #
+        # Deriving them from the camera's up leaves every mark tilted against
+        # the face it sits on: the projection turns each of the three visible
+        # faces differently, so a mark squared to the screen is square to
+        # nothing you can see. A cube's faces are square and axis-aligned, so
+        # taking the axes from the edges is both exact and what a real die
+        # does -- a pip is aligned to its face, not to the viewer.
+        #
+        # The octahedron cannot do this: its triangles have no edge that reads
+        # as horizontal, which is why it squares its marks to the camera
+        # instead.
         n_vec = Vector((float(key[0]), float(key[1]), float(key[2])))
-        axis_v = cam_up - n_vec * cam_up.dot(n_vec)
-        if axis_v.length < 1e-6:
-            axis_v = cam_right - n_vec * cam_right.dot(n_vec)
-        axis_v.normalize()
-        axis_u = axis_v.cross(n_vec).normalized()
+        edge = None
+        for loop in poly.loops:
+            d = (loop.link_loop_next.vert.co - loop.vert.co)
+            if d.length > 1e-6:
+                edge = d.normalized()
+                break
+        axis_u = edge if edge is not None else Vector((1.0, 0.0, 0.0))
+        axis_v = n_vec.cross(axis_u).normalized()
+
+        # Stand the mark upright as the viewer sees it: of the face's four
+        # possible quarter turns, take the one whose v points most nearly up
+        # the screen. Without this each face keeps whichever edge bmesh
+        # happened to list first, and the marks sit at four different angles.
+        best = None
+        for _ in range(4):
+            score = axis_v.dot(cam_up)
+            if best is None or score > best[0]:
+                best = (score, axis_u.copy(), axis_v.copy())
+            axis_u, axis_v = axis_v, -axis_u
+        _, axis_u, axis_v = best
+
         # Right-handed about the outward normal, or the mark is mirrored.
         if axis_u.cross(axis_v).dot(n_vec) < 0:
             axis_u = -axis_u
@@ -1585,7 +1613,10 @@ def _paint_cube_symbols(cube, die: Dict[str, int]) -> None:
         mid_u = sum(us) / len(us)
         mid_v = sum(vs) / len(vs)
         half = max(max(us) - min(us), max(vs) - min(vs)) / 2.0 or 1.0
-        fit = 0.29 / half          # window half-width in tile units
+        # Larger numerator, smaller mark: it widens the window of the tile the
+        # face maps to, and the ink is a fixed share of that tile. 0.40 leaves
+        # the mark at about 0.37 of the face.
+        fit = 0.40 / half
 
         for pu, pv, loop in pts:
             u_ = 0.5 + (pu - mid_u) * fit

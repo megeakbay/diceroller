@@ -1,0 +1,309 @@
+{
+  "puzzle_id": 3,
+  "level": 5,
+  "variant": "top",
+  "seed": 44,
+  "question": "If the dice is rolled on the showed path, what will be the number on the top?",
+  "num_cot_images": 5,
+  "num_rolls": 5,
+  "initial_state_image": "initial.png",
+  "cot_images": [
+    "cot_00.png",
+    "cot_01.png",
+    "cot_02.png",
+    "cot_03.png",
+    "cot_04.png"
+  ],
+  "board": {
+    "width": 7,
+    "height": 7,
+    "blocked": []
+  },
+  "start": [
+    3,
+    4
+  ],
+  "initial_die": {
+    "top": 1,
+    "bottom": 6,
+    "north": 2,
+    "south": 5,
+    "east": 3,
+    "west": 4
+  },
+  "answer": 3,
+  "steps": [
+    {
+      "step": 1,
+      "path": null,
+      "direction": "N",
+      "direction_name": "up-left",
+      "from_position": [
+        3,
+        4
+      ],
+      "to_position": [
+        3,
+        5
+      ],
+      "die_before": {
+        "top": 1,
+        "bottom": 6,
+        "north": 2,
+        "south": 5,
+        "east": 3,
+        "west": 4
+      },
+      "die_after": {
+        "top": 5,
+        "bottom": 2,
+        "north": 1,
+        "south": 6,
+        "east": 3,
+        "west": 4
+      },
+      "bottom_face": 2,
+      "running_bottom_sum": 2
+    },
+    {
+      "step": 2,
+      "path": null,
+      "direction": "N",
+      "direction_name": "up-left",
+      "from_position": [
+        3,
+        5
+      ],
+      "to_position": [
+        3,
+        6
+      ],
+      "die_before": {
+        "top": 5,
+        "bottom": 2,
+        "north": 1,
+        "south": 6,
+        "east": 3,
+        "west": 4
+      },
+      "die_after": {
+        "top": 6,
+        "bottom": 1,
+        "north": 5,
+        "south": 2,
+        "east": 3,
+        "west": 4
+      },
+      "bottom_face": 1,
+      "running_bottom_sum": 3
+    },
+    {
+      "step": 3,
+      "path": null,
+      "direction": "E",
+      "direction_name": "up-right",
+      "from_position": [
+        3,
+        6
+      ],
+      "to_position": [
+        4,
+        6
+      ],
+      "die_before": {
+        "top": 6,
+        "bottom": 1,
+        "north": 5,
+        "south": 2,
+        "east": 3,
+        "west": 4
+      },
+      "die_after": {
+        "top": 4,
+        "bottom": 3,
+        "north": 5,
+        "south": 2,
+        "east": 6,
+        "west": 1
+      },
+      "bottom_face": 3,
+      "running_bottom_sum": 6
+    },
+    {
+      "step": 4,
+      "path": null,
+      "direction": "E",
+      "direction_name": "up-right",
+      "from_position": [
+        4,
+        6
+      ],
+      "to_position": [
+        5,
+        6
+      ],
+      "die_before": {
+        "top": 4,
+        "bottom": 3,
+        "north": 5,
+        "south": 2,
+        "east": 6,
+        "west": 1
+      },
+      "die_after": {
+        "top": 1,
+        "bottom": 6,
+        "north": 5,
+        "south": 2,
+        "east": 4,
+        "west": 3
+      },
+      "bottom_face": 6,
+      "running_bottom_sum": 12
+    },
+    {
+      "step": 5,
+      "path": null,
+      "direction": "E",
+      "direction_name": "up-right",
+      "from_position": [
+        5,
+        6
+      ],
+      "to_position": [
+        6,
+        6
+      ],
+      "die_before": {
+        "top": 1,
+        "bottom": 6,
+        "north": 5,
+        "south": 2,
+        "east": 4,
+        "west": 3
+      },
+      "die_after": {
+        "top": 3,
+        "bottom": 4,
+        "north": 5,
+        "south": 2,
+        "east": 1,
+        "west": 6
+      },
+      "bottom_face": 4,
+      "running_bottom_sum": 16
+    }
+  ],
+  "path": [
+    "N",
+    "N",
+    "E",
+    "E",
+    "E"
+  ],
+  "trace": [
+    {
+      "step": 0,
+      "direction": null,
+      "position": [
+        3,
+        4
+      ],
+      "die": {
+        "top": 1,
+        "bottom": 6,
+        "north": 2,
+        "south": 5,
+        "east": 3,
+        "west": 4
+      },
+      "bottom": 6
+    },
+    {
+      "step": 1,
+      "direction": "N",
+      "position": [
+        3,
+        5
+      ],
+      "die": {
+        "top": 5,
+        "bottom": 2,
+        "north": 1,
+        "south": 6,
+        "east": 3,
+        "west": 4
+      },
+      "bottom": 2
+    },
+    {
+      "step": 2,
+      "direction": "N",
+      "position": [
+        3,
+        6
+      ],
+      "die": {
+        "top": 6,
+        "bottom": 1,
+        "north": 5,
+        "south": 2,
+        "east": 3,
+        "west": 4
+      },
+      "bottom": 1
+    },
+    {
+      "step": 3,
+      "direction": "E",
+      "position": [
+        4,
+        6
+      ],
+      "die": {
+        "top": 4,
+        "bottom": 3,
+        "north": 5,
+        "south": 2,
+        "east": 6,
+        "west": 1
+      },
+      "bottom": 3
+    },
+    {
+      "step": 4,
+      "direction": "E",
+      "position": [
+        5,
+        6
+      ],
+      "die": {
+        "top": 1,
+        "bottom": 6,
+        "north": 5,
+        "south": 2,
+        "east": 4,
+        "west": 3
+      },
+      "bottom": 6
+    },
+    {
+      "step": 5,
+      "direction": "E",
+      "position": [
+        6,
+        6
+      ],
+      "die": {
+        "top": 3,
+        "bottom": 4,
+        "north": 5,
+        "south": 2,
+        "east": 1,
+        "west": 6
+      },
+      "bottom": 4
+    }
+  ],
+  "net_image": "net.png"
+}

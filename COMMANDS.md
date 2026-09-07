@@ -31,6 +31,22 @@ py render_blender.py --output-dir out_cube_digits --variant top \
 py face_nets.py --output-dir out_cube_digits --variant top
 ```
 
+### 6 yüzlü + noktalar
+
+```bash
+mkdir -p out_cube_pin
+find output/top -name "*metadata.json" | while read f; do
+  t="out_cube_pin/${f#output/}"; mkdir -p "$(dirname "$t")" && cp "$f" "$t"
+done
+
+py render_blender.py --output-dir out_cube_pin --variant top \
+    --engine eevee --samples 64
+
+py face_nets.py --output-dir out_cube_pin --variant top
+```
+
+Noktalar varsayılan, bayrak gerekmiyor.
+
 ### 6 yüzlü + semboller
 
 ```bash
