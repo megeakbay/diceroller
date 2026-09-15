@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import sys
 from pathlib import Path
@@ -32,7 +33,13 @@ from gemini_common import (  # noqa: E402
     make_client,
     text_part,
 )
-from generate_reasoning import describe, is_hint_leak  # noqa: E402
+from generate_reasoning import (  # noqa: E402
+    SYMBOL_NOTE,
+    describe,
+    is_hint_leak,
+    mark,
+    uses_symbols,
+)
 
 JUDGE_PROMPT = """
 You are judging one step of reasoning about a die rolled across a grid board.
@@ -135,13 +142,17 @@ Respond EXACTLY with this JSON:
 """
 
 
-def describe_octahedron(faces: Dict[str, Any]) -> str:
+def describe_octahedron(faces: Dict[str, Any], symbols: bool = False) -> str:
     """The eight-faced die's state, worded the way the picture shows it."""
+    def seq(v):
+        if isinstance(v, (list, tuple)):
+            return "[" + ", ".join(mark(x, symbols) for x in v) + "]"
+        return mark(v, symbols)
     return (
-        f"bottom {faces['bottom']}, "
-        f"opposite the bottom {faces['opposite_the_bottom']}, "
-        f"visible sides {faces['visible_sides']}, "
-        f"hidden sides {faces['hidden_sides']}"
+        f"bottom {seq(faces['bottom'])}, "
+        f"opposite the bottom {seq(faces['opposite_the_bottom'])}, "
+        f"visible sides {seq(faces['visible_sides'])}, "
+        f"hidden sides {seq(faces['hidden_sides'])}"
     )
 
 
@@ -175,6 +186,7 @@ def judge_step(
     step_meta: Dict[str, Any],
     record: Dict[str, Any],
     model: str,
+    symbols: bool = False,
 ) -> Dict[str, Any]:
     """Return a verdict dict for one step."""
     # Deterministic checks first — no API call needed if these already fail.
@@ -210,18 +222,18 @@ def judge_step(
         # Octahedron: describe the eight-faced state instead of the cube's six.
         prompt = OCTAHEDRON_JUDGE_PROMPT.format(
             direction=step_meta["direction_name"],
-            before=describe_octahedron(step_meta["faces_before"]),
-            after=describe_octahedron(step_meta["faces_after"]),
+            before=describe_octahedron(step_meta["faces_before"], symbols),
+            after=describe_octahedron(step_meta["faces_after"], symbols),
             reasoning=record.get("reasoning", ""),
-        )
+        ) + (SYMBOL_NOTE if symbols else "")
         return _ask_judge(client, model, prompt, leaked)
 
     prompt = JUDGE_PROMPT.format(
         direction=step_meta["direction"],
-        before=describe(step_meta["die_before"]),
-        after=describe(step_meta["die_after"]),
+        before=describe(step_meta["die_before"], symbols),
+        after=describe(step_meta["die_after"], symbols),
         reasoning=record["reasoning"],
-    )
+    ) + (SYMBOL_NOTE if symbols else "")
 
     try:
         verdict = generate_json(
@@ -249,6 +261,8 @@ def judge_step(
 def main() -> None:
     ap = argparse.ArgumentParser(description="Judge per-step reasoning texts")
     ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--workers", type=int, default=8,
+                    help="concurrent puzzles (1 = the old sequential behaviour)")
     ap.add_argument("--variant", choices=["top", "sum", "two", "octahedron"],
                     default=None)
     ap.add_argument("--level", type=int, default=None)
@@ -266,22 +280,22 @@ def main() -> None:
 
     judged = passed = 0
 
-    for i, puzzle_dir in enumerate(puzzle_dirs, 1):
+    def judge_puzzle(puzzle_dir):
+        """Judge one puzzle. Returns (judged, passed, total_steps) or None."""
         reasoning_path = puzzle_dir / "cot_reasoning.json"
         if not reasoning_path.exists():
-            print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: no cot_reasoning.json, skipping")
-            continue
+            return None
 
         metadata = json.loads((puzzle_dir / "metadata.json").read_text())
         try:
             data = json.loads(reasoning_path.read_text())
         except json.JSONDecodeError:
             print(f"  [skip bad json] {reasoning_path}", file=sys.stderr)
-            continue
+            return None
 
         steps_meta = {(s.get("path"), s["step"]): s for s in metadata["steps"]}
-
-        local_pass = 0
+        syms = uses_symbols(metadata)
+        local_judged = local_pass = 0
         for record in data["steps"]:
             if record.get("verdict") and not args.rejudge:
                 if record["verdict"].get("passed"):
@@ -290,15 +304,46 @@ def main() -> None:
             step_meta = steps_meta.get((record.get("path"), record["step"]))
             if step_meta is None:
                 continue
-            verdict = judge_step(client, step_meta, record, args.model)
+            verdict = judge_step(client, step_meta, record, args.model, syms)
             record["verdict"] = verdict
-            judged += 1
+            local_judged += 1
             if verdict["passed"]:
                 local_pass += 1
 
-        passed += local_pass
+        # Only this thread touches this file: one puzzle, one worker.
         reasoning_path.write_text(json.dumps(data, indent=2))
-        print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: {local_pass}/{len(data['steps'])} passed")
+        return local_judged, local_pass, len(data["steps"])
+
+    if args.workers <= 1:
+        for i, puzzle_dir in enumerate(puzzle_dirs, 1):
+            r = judge_puzzle(puzzle_dir)
+            if r is None:
+                print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: skipped")
+                continue
+            j, p_, n = r
+            judged += j
+            passed += p_
+            print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: {p_}/{n} passed")
+    else:
+        done = 0
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {pool.submit(judge_puzzle, d): d for d in puzzle_dirs}
+            for fut in as_completed(futures):
+                d = futures[fut]
+                done += 1
+                try:
+                    r = fut.result()
+                except Exception as exc:  # noqa: BLE001 - keep going past one bad puzzle
+                    print(f"[{done}/{len(puzzle_dirs)}] {d}: FAILED {exc}",
+                          file=sys.stderr)
+                    continue
+                if r is None:
+                    print(f"[{done}/{len(puzzle_dirs)}] {d}: skipped", flush=True)
+                    continue
+                j, p_, n = r
+                judged += j
+                passed += p_
+                print(f"[{done}/{len(puzzle_dirs)}] {d}: {p_}/{n} passed", flush=True)
 
     print(f"\nJudged {judged} steps this run. {passed} steps currently passing.")
 

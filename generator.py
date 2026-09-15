@@ -136,6 +136,34 @@ def canonical_die() -> DieState:
     return DieState(top=1, bottom=6, north=2, south=5, east=3, west=4)
 
 
+def all_orientations() -> List[DieState]:
+    """
+    Every pose a die can rest in: 24 of them, six faces up by four turns each.
+
+    Built by rolling the canonical die rather than by listing face values, so
+    each one is reachable by real moves and keeps opposite faces summing to 7.
+    A hand-written table would be easy to get subtly wrong -- a mirrored die
+    looks right face-by-face but cannot be produced by rolling.
+    """
+    seen: Dict[Tuple[int, ...], DieState] = {}
+    frontier = [canonical_die()]
+    while frontier:
+        die = frontier.pop()
+        key = (die.top, die.bottom, die.north, die.south, die.east, die.west)
+        if key in seen:
+            continue
+        seen[key] = die
+        for direction in ("N", "S", "E", "W"):
+            frontier.append(roll(die, direction))
+    return list(seen.values())
+
+
+def random_die(rng: random.Random) -> DieState:
+    """One of the 24 orientations, drawn uniformly."""
+    poses = all_orientations()
+    return poses[rng.randrange(len(poses))]
+
+
 def roll(die: DieState, direction: str) -> DieState:
     """
     Tip the die one cell in `direction`, rotating about the leading bottom edge.
@@ -374,7 +402,15 @@ def generate_instance(
                 blocked.append(cell)
                 break
 
-    die = canonical_die()
+    # A random pose, not the canonical one.
+    #
+    # Fixing the start orientation left the path and the start cell as the only
+    # things that varied, and that was not enough: 250 level-1 cube puzzles
+    # held 36 distinct ones, and across the octahedron it was far worse. There
+    # are 24 poses, so drawing one multiplies the space of distinct puzzles by
+    # 24. The reference net stays canonical -- it states which face opposes
+    # which, not where the die is now, so it is still true of every puzzle.
+    die = random_die(rng)
     die.validate()
 
     if variant == "two":

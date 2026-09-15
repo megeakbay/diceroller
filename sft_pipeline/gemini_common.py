@@ -19,8 +19,19 @@ from google import genai
 from google.genai import types
 
 DEFAULT_MODEL = "gemini-3.1-pro-preview"
-MAX_RETRIES = 4
-RETRY_BACKOFF = 5.0
+MAX_RETRIES = 3
+RETRY_BACKOFF = 3.0
+# Without this a request that never gets answered hangs forever: the SDK has no
+# default deadline, so the retry loop below never gets its turn. A whole pool of
+# workers can end up asleep on dead sockets -- 12 of them stalled a judge run for
+# 22 minutes with no CPU, no network, and nothing written. Milliseconds.
+# Sized against real calls, which carry two PNGs: measured 19.4s on average
+# and 44.3s at the slowest. 45s sat right on that tail and cut off every slow
+# call -- 31 steps of 1200 were lost to 504s in one run, and each had to be
+# regenerated afterwards. 150s clears the measured worst case by more than
+# three times while still capping a hung request: nothing waits the unbounded
+# forever that an absent deadline allows.
+REQUEST_TIMEOUT_MS = 150_000
 
 
 def load_dotenv() -> None:
@@ -77,7 +88,10 @@ def generate_json(
     Retries on transport errors, empty responses, unparseable output, and
     missing required fields. Raises the last error if every attempt fails.
     """
-    config_kwargs: Dict[str, Any] = {"response_mime_type": "application/json"}
+    config_kwargs: Dict[str, Any] = {
+        "response_mime_type": "application/json",
+        "http_options": types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+    }
     if schema is not None:
         config_kwargs["response_schema"] = schema
 

@@ -307,7 +307,10 @@ def render_net(variant: str, out_path: Path, symbols: bool = False,
     # digits, the cube in place of its pips.
     _br.USE_SYMBOLS = bool(symbols)
     _br.MIXED_SYMBOL_FACES = set(mixed_faces or ())
-    fig, ax = plt.subplots(figsize=(6, 5))
+    # Square, and the same 1000x1000 as the rendered frames: a net sits beside
+    # those pictures, so a reader flipping between them should not have to
+    # re-scale. 10 inches at 100 dpi lands exactly on 1000 px.
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -320,8 +323,12 @@ def render_net(variant: str, out_path: Path, symbols: bool = False,
     # repeating it here would only be words for a reader that is being shown a
     # picture -- the net is meant to be read as the die's shape, not annotated.
     ax.autoscale_view()
+    # `bbox_inches="tight"` crops to the drawing, which made every net a
+    # different size (1002x760 for the cube, 610x832 for the octahedron).
+    # Saving the whole figure keeps the frame square and identical across
+    # variants; `tight_layout` still trims the surrounding padding.
     fig.tight_layout()
-    fig.savefig(out_path, dpi=170, bbox_inches="tight", facecolor="white")
+    fig.savefig(out_path, dpi=100, facecolor="white")
     plt.close(fig)
 
 

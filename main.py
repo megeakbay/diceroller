@@ -14,9 +14,15 @@ steps required, matching the MentisOculi difficulty convention.
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
+
+# When true, main.py writes metadata only and leaves every image to Blender
+# (`render_blender.py`). The matplotlib figures below are the original 2D
+# renderer; they share filenames with the Blender output, so producing both
+# means whichever runs last wins. --no-images keeps that from happening.
+SKIP_IMAGES = False
 
 from generator import (
     DIRECTION_NAMES,
@@ -94,6 +100,33 @@ def build_step_records(instance: Dict[str, Any]) -> List[Dict[str, Any]]:
     return records
 
 
+def puzzle_signature(instance: Dict[str, Any]) -> str:
+    """
+    What makes two puzzles the same puzzle.
+
+    Two seeds can land on one puzzle -- at level 1 there are only so many
+    (cell, pose, direction) triples, and 50 draws from ~2400 of them collided
+    twice in practice. A dataset must not repeat itself, so the generators
+    below skip a signature they have already written and move to the next
+    seed rather than counting it as produced.
+    """
+    return json.dumps(
+        {
+            "start": instance.get("start"),
+            "path": instance.get("path"),
+            "paths": instance.get("paths"),
+            "initial_die": instance.get("initial_die"),
+            "board": instance.get("board"),
+            # The octahedron carries none of the cube's fields: its start
+            # pose lives in trace[0], and leaving it out made two puzzles that
+            # begin in different orientations -- showing different faces --
+            # look like the same puzzle.
+            "first_state": (instance.get("trace") or [None])[0],
+        },
+        sort_keys=True,
+    )
+
+
 def save_puzzle(
     instance: Dict[str, Any],
     level: int,
@@ -108,9 +141,10 @@ def save_puzzle(
     puzzle_dir.mkdir(parents=True, exist_ok=True)
 
     # Question image: initial state with the full path shown
-    fig = render_state(instance, step=0)
-    fig.savefig(puzzle_dir / "initial.png", dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    if not SKIP_IMAGES:
+        fig = render_state(instance, step=0)
+        fig.savefig(puzzle_dir / "initial.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
 
     # One render per roll
     cot_files: List[str] = []
@@ -128,17 +162,19 @@ def save_puzzle(
                 "answer": instance["sums"][tag],
             }
             for step_idx in range(1, len(instance["paths"][tag]) + 1):
-                fig = render_state(sub, step=step_idx)
                 name = f"cot_{tag}_{step_idx - 1:02d}.png"
-                fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
-                plt.close(fig)
+                if not SKIP_IMAGES:
+                    fig = render_state(sub, step=step_idx)
+                    fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
+                    plt.close(fig)
                 cot_files.append(name)
     else:
         for step_idx in range(1, len(instance["path"]) + 1):
-            fig = render_state(instance, step=step_idx)
             name = f"cot_{step_idx - 1:02d}.png"
-            fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
-            plt.close(fig)
+            if not SKIP_IMAGES:
+                fig = render_state(instance, step=step_idx)
+                fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
+                plt.close(fig)
             cot_files.append(name)
 
     steps = build_step_records(instance)
@@ -180,11 +216,13 @@ def generate_variant(
     seed: int,
     num_blocked: int,
     max_attempts: int = 200000,
+    excluded: Optional[set] = None,
 ) -> Dict[int, int]:
     """Generate all levels for one variant. Level == number of rolls."""
     produced = {level: 0 for level in range(min_level, max_level + 1)}
     current_seed = seed
     attempts = 0
+    seen: set = set(excluded or ())
 
     print(f"\n  Variant '{variant}': levels {min_level}-{max_level} "
           f"({instances_per_level} each)")
@@ -202,6 +240,12 @@ def generate_variant(
         except RuntimeError:
             current_seed += 1
             continue
+
+        signature = puzzle_signature(instance)
+        if signature in seen:
+            current_seed += 1
+            continue                 # this seed repeats one already written
+        seen.add(signature)
 
         puzzle_id = produced[level] + 1
         save_puzzle(instance, level, puzzle_id, current_seed, output_dir)
@@ -239,16 +283,18 @@ def save_octahedron_puzzle(instance, level, puzzle_id, output_dir):
     puzzle_dir = output_dir / "octahedron" / f"level_{level:02d}" / f"puzzle_{puzzle_id:04d}"
     puzzle_dir.mkdir(parents=True, exist_ok=True)
 
-    fig = oct_.render_state(instance, step=0)
-    fig.savefig(puzzle_dir / "initial.png", dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    if not SKIP_IMAGES:
+        fig = oct_.render_state(instance, step=0)
+        fig.savefig(puzzle_dir / "initial.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
 
     cot_files = []
     for step_idx in range(1, len(instance["trace"])):
-        fig = oct_.render_state(instance, step=step_idx)
         name = f"cot_{step_idx - 1:02d}.png"
-        fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
-        plt.close(fig)
+        if not SKIP_IMAGES:
+            fig = oct_.render_state(instance, step=step_idx)
+            fig.savefig(puzzle_dir / name, dpi=200, bbox_inches="tight")
+            plt.close(fig)
         cot_files.append(name)
 
     metadata = dict(instance)
@@ -266,7 +312,8 @@ def save_octahedron_puzzle(instance, level, puzzle_id, output_dir):
         json.dump(metadata, f, indent=2)
 
 
-def generate_octahedron(min_level, max_level, instances_per_level, output_dir, seed):
+def generate_octahedron(min_level, max_level, instances_per_level, output_dir,
+                        seed, excluded=None):
     """Generate all levels of the octahedron variant. Level == number of rolls."""
     import octahedron as oct_
 
@@ -274,6 +321,7 @@ def generate_octahedron(min_level, max_level, instances_per_level, output_dir, s
           f"({instances_per_level} each)")
     produced = {}
     current_seed = seed
+    seen: set = set(excluded or ())
     for level in range(min_level, max_level + 1):
         made = 0
         while made < instances_per_level:
@@ -282,6 +330,10 @@ def generate_octahedron(min_level, max_level, instances_per_level, output_dir, s
             # A path can stall early if it corners itself; skip short ones.
             if instance["num_rolls"] < level:
                 continue
+            signature = puzzle_signature(instance)
+            if signature in seen:
+                continue             # this seed repeats one already written
+            seen.add(signature)
             made += 1
             save_octahedron_puzzle(instance, level, made, output_dir)
         produced[level] = made
@@ -317,7 +369,32 @@ def main() -> None:
     parser.add_argument("--num-blocked", type=int, default=0,
                         help="Impassable cells per board")
     parser.add_argument("--output-dir", type=str, default="output")
+    parser.add_argument("--exclude", type=str, default=None,
+                        help="a pool directory whose puzzles must not be "
+                             "repeated here -- pass the train pool when "
+                             "generating test, so the two never overlap")
+    parser.add_argument("--no-images", action="store_true",
+                        help="write metadata only; render every image with "
+                             "render_blender.py instead")
     args = parser.parse_args()
+
+    global SKIP_IMAGES
+    SKIP_IMAGES = args.no_images
+
+    # Puzzles written by an earlier run that this one must not repeat.
+    #
+    # The signature set that keeps one run free of duplicates dies with the
+    # process, so generating test after train let the two overlap -- more than
+    # half of one test set also appeared in train, which makes the benchmark
+    # measure memorisation. Reading the other pool back closes that.
+    excluded = set()
+    if args.exclude:
+        for meta_path in Path(args.exclude).glob("*/level_*/puzzle_*/metadata.json"):
+            try:
+                excluded.add(puzzle_signature(json.loads(meta_path.read_text())))
+            except (OSError, json.JSONDecodeError):
+                continue
+        print(f"  excluding {len(excluded)} puzzle(s) from {args.exclude}")
 
     if args.level is not None:
         min_level = max_level = args.level
@@ -346,6 +423,7 @@ def main() -> None:
                 instances_per_level=args.instances,
                 output_dir=out,
                 seed=args.seed,
+                excluded=excluded,
             )
         else:
             stats = generate_variant(
@@ -356,6 +434,7 @@ def main() -> None:
                 output_dir=out,
                 seed=args.seed,
                 num_blocked=args.num_blocked,
+                excluded=excluded,
             )
         total += sum(stats.values())
 

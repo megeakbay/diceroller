@@ -1,12 +1,56 @@
-# Secrets — never commit
+# ---------------------------------------------------------------------------
+# Secrets — never commit. Only .env.example, with placeholder values, is tracked.
+# ---------------------------------------------------------------------------
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+.netrc
 
+# ---------------------------------------------------------------------------
+# Images — every rendered frame, net and figure. The dataset is reproducible
+# from the generators and the seeds, so the pictures are build output, not
+# source: 6302 of them were being tracked, over half a gigabyte.
+# ---------------------------------------------------------------------------
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.svg
+*.mp4
+*.blend
+*.blend1
+
+# ---------------------------------------------------------------------------
+# Run logs — they quote absolute paths from the machine that produced them
+# (/Users/<name>/...), along with command lines and model output.
+# ---------------------------------------------------------------------------
+*.log
+logs/
+nohup.out
+
+# ---------------------------------------------------------------------------
 # Generated data
+# ---------------------------------------------------------------------------
 output/
 output_*/
 output.zip
 traces/
+# Dataset pools and the rendered sets built from them
+ds/
+ds_*/
+pool_train/
+pool_test/
+out_*/
+demo/
+demo2/
+demo*.zip
 # Renders kept aside for comparison (matplotlib vs Blender)
 output_matplotlib/
 dataset.jsonl
@@ -15,12 +59,21 @@ tool_use_results.json
 *_results.json
 report.json
 
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
 
-# OS
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
 .DS_Store
+.vscode/
+.idea/
+*.swp

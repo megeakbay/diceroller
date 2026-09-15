@@ -350,11 +350,31 @@ def generate_instance(seed: int = 0, num_rolls: int = 5,
     # over the edge. Test the projected silhouette against the board directly.
     interior = {k for k in board if _silhouette_on_board(k, board[k]["orientation"], board)}
 
-    orient = 0
-    pos = (0.0, 0.0)
+    # Start anywhere on the board, in any pose.
+    #
+    # Fixing both (cell (0,0), orientation 0) left the path as the only thing
+    # that varied, and a path of N rolls has at most 6**N forms: at one roll
+    # there were six puzzles to draw from, so asking for fifty produced the
+    # same handful over and over -- 250 level-1 puzzles held 3 distinct ones,
+    # and more than half of every test set also appeared in train.
+    #
+    # Varying the cell and the pose multiplies that ceiling by the number of
+    # interior cells times the number of poses, which is enough to make even
+    # the shortest levels distinct.
+    orient = rng.randrange(NUM_ORIENTATIONS)
+    # Prefer a start with room around it. A cell offers three rolls, and one
+    # against the rim corners the walk early, so require all three to land
+    # back on the board. (An earlier version asked for four, which no cell has
+    # -- the filter silently matched nothing and fell through to the whole
+    # interior.)
+    roomy = [c for c in sorted(interior)
+             if all((round(c[0] + s_[0], 2), round(c[1] + s_[1], 2)) in interior
+                    for s_ in ROLL_GRAPH[orient])]
+    pool = roomy or sorted(interior)
+    pos = tuple(pool[rng.randrange(len(pool))]) if pool else (0.0, 0.0)
     trace = [{"cell": list(pos), "orientation": orient, "bottom": bottom_value(orient)}]
     path: List[List[float]] = []
-    visited = {(0.0, 0.0)}
+    visited = {pos}
 
     for _ in range(num_rolls):
         options = [(s, o) for s, o in ROLL_GRAPH[orient].items()

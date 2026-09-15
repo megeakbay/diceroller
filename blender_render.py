@@ -169,7 +169,15 @@ OCT_ELEVATION = 26.0
 # the die small in a lot of empty space -- at margin=4 and ortho 11.80 the die
 # fell from 49% of the frame's width to 36%, which is what made it hard to
 # read.
-OCT_ORTHO_SCALE = 8.90
+#
+# Squaring the frame did not change what this has to cover: ortho_scale
+# governs the width either way, and the widest board in the set measures 7.84
+# units. At 8.90 that board filled 88% of the frame; 8.2 takes it to 96% and
+# grows everything in step, which is as far as this can go -- below about 7.8
+# the widest boards run off the edge. Narrower boards genuinely sit smaller,
+# because the scale is pinned rather than fitted per puzzle, so a die is the
+# same size in every picture.
+OCT_ORTHO_SCALE = 8.2
 
 
 # Where setup_camera last placed the camera, and what it was aimed at. Read
@@ -239,6 +247,31 @@ def camera_frame() -> Tuple["Vector", "Vector"]:
     right = world_up.cross(view).normalized()
     up = view.cross(right).normalized()
     return right, up
+
+
+def _cube_ortho_scale(bw: float, bh: float) -> float:
+    """
+    The width the cube camera must cover to hold the whole board.
+
+    Measured, not estimated: the board's corners are projected onto the camera's
+    screen basis at both z=0 and z=1 (a die standing on a corner), and the
+    horizontal span between the extremes is what the frame has to fit. The
+    projection is wider than it is tall at this elevation, so width is the
+    binding constraint and the caller only pads this one number.
+    """
+    e, a = math.radians(CUBE_ELEVATION), math.radians(CUBE_AZIMUTH)
+    view = Vector((-math.cos(e) * math.cos(a),
+                   -math.cos(e) * math.sin(a),
+                   -math.sin(e)))
+    right = view.cross(Vector((0.0, 0.0, 1.0)))
+    right.normalize()
+    cx, cy = bw / 2.0, bh / 2.0
+    us = []
+    for x in (0.0, bw):
+        for y in (0.0, bh):
+            for z in (0.0, 1.0):
+                us.append(Vector((x - cx, y - cy, z)).dot(right))
+    return max(us) - min(us)
 
 
 def setup_camera(target: Sequence[float], elevation: float, azimuth: float,
@@ -1341,44 +1374,34 @@ def unwrap_faces_to_atlas(obj, face_slots: Dict[int, int], cols: int,
         cx, cy = (slot % span) * 2, (slot // span) * 2
 
         if natural:
-            # Axes in the face's own plane, so the digit lies in the surface
-            # and follows its tilt. The in-plane "up" is chosen as the
-            # direction of the corner opposite the most level edge, which
-            # keeps the glyph standing on that edge rather than on a vertex.
+            # Axes fixed to the solid, not to the camera: the mark is painted
+            # on the face and turns with it, the way a real die's numbers do.
+            # As the die tumbles a face comes round at every angle -- measured
+            # across 212 visible faces, 25% read upright, 19% fully inverted,
+            # the rest between -- and that turning is itself information about
+            # how the solid moved.
+            #
+            # "Up" is the direction from the midpoint of the face's first edge
+            # to the opposite corner. Which edge counts as first is arbitrary
+            # but *stable*: bmesh keeps loop order with the face, so the mark
+            # stays put on that face for the whole roll rather than jumping
+            # between frames.
+            #
+            # An earlier rule projected the camera's up into the face plane,
+            # which kept every digit upright but pinned them to the screen --
+            # they no longer turned with the solid at all.
             fn = face.normal.normalized()
             loops = list(face.loops)
-            # Pick the edge that looks most horizontal, measured as an angle on
-            # screen rather than as a slope ratio.
-            #
-            # A ratio ranks a near-vertical edge as "flat" once its run is
-            # tiny, which is how the front face ended up with its digit rolled
-            # 60 degrees while its neighbours sat within 21. An angle has no
-            # such blind spot, and the apex test keeps the glyph standing on
-            # the chosen edge rather than hanging from it.
-            best_axis, best_ang = None, None
-            for i in range(3):
-                a = loops[(i + 1) % 3].vert.co
-                b = loops[(i + 2) % 3].vert.co
-                d = b - a
-                rise = (loops[i].vert.co - (a + b) / 2.0).dot(cam_up)
-                if rise <= 1e-6:
-                    continue            # apex below its baseline: upside down
-                ang = abs(math.degrees(math.atan2(d.dot(cam_up),
-                                                  d.dot(cam_right))))
-                ang = min(ang, 180.0 - ang)       # direction, not sign
-                if best_ang is None or ang < best_ang:
-                    best_ang, best_axis = ang, d
-            if best_axis is None or best_axis.length < 1e-9:
-                axis_u = cam_right - fn * cam_right.dot(fn)
-            else:
-                axis_u = best_axis.copy()
-            axis_u = axis_u - fn * axis_u.dot(fn)
-            if axis_u.length < 1e-9:
-                axis_u = cam_right - fn * cam_right.dot(fn)
-            axis_u.normalize()
-            axis_v = fn.cross(axis_u).normalized()
-            if axis_v.dot(cam_up) < 0:
-                axis_v, axis_u = -axis_v, -axis_u
+            base = (loops[0].vert.co + loops[1].vert.co) / 2.0
+            axis_v = loops[2].vert.co - base
+            axis_v = axis_v - fn * axis_v.dot(fn)
+            if axis_v.length < 1e-9:
+                # Degenerate face: any in-plane direction will do.
+                axis_v = cam_right - fn * cam_right.dot(fn)
+            axis_v.normalize()
+            # u completes a right-handed frame with v and the face normal, so
+            # the glyph is never mirrored: flipping u alone would reflect it.
+            axis_u = axis_v.cross(fn).normalized()
         else:
             axis_u, axis_v = cam_right, cam_up
 
@@ -1822,8 +1845,12 @@ def render_cube_state(meta: Dict[str, Any], step: int, out_path: Path,
               symbols=bool(getattr(args, "symbols", False)))
 
     target = (bw / 2.0, bh / 2.0, 0.0)
-    # Fit the board's diagonal, plus room for a die standing at a far corner.
-    ortho = math.hypot(bw, bh) * 0.80 + 1.2
+    # Frame the board by projecting it, rather than by scaling its diagonal.
+    # The old estimate (hypot * 0.80 + 1.2) undershot by 8.6% on a 7x7 board,
+    # so a die resting on a near or far corner ran off the edge of the frame.
+    # Project all eight board corners at both ground level and die height, take
+    # the widest span the camera actually has to cover, and add a margin.
+    ortho = _cube_ortho_scale(bw, bh) * 1.12
     setup_camera(target, CUBE_ELEVATION, CUBE_AZIMUTH, ortho)
     setup_lighting(target, CUBE_AZIMUTH, scale=max(1.0, max(bw, bh) / 6.0))
     setup_render(args.width or 1000, args.height or 1000,
@@ -2158,9 +2185,11 @@ def render_octahedron_state(meta: Dict[str, Any], step: int, out_path: Path,
     build_octahedron(at, orientation, oct_,
                      natural=getattr(args, "natural", False))
     setup_lighting(target, OCT_AZIMUTH, scale=max(1.0, ortho / 6.0))
-    # Wide by default: the cropped lattice is a band, matching the 10x6.5 figure
-    # the 2D renderer used.
-    setup_render(args.width or 1500, args.height or 975,
+    # Square by default, matching the cube's frame so the four markings are
+    # directly comparable. The lattice is a band about 3.4 times wider than it
+    # is tall, so a square frame leaves room above and below rather than
+    # cropping: ortho_scale governs the width, which is the binding dimension.
+    setup_render(args.width or 1000, args.height or 1000,
                  args.samples, args.engine, args.transparent)
 
     # Two passes, composited: the scene as it stands, then the route alone drawn
@@ -2217,10 +2246,13 @@ def render_puzzle(puzzle_dir: Path, args: argparse.Namespace) -> int:
     variant = meta.get("variant", "top")
     suffix = args.suffix or ""
 
-    # Resolve the per-variant resolution defaults here, so the renderers and
-    # the log agree on one number rather than each filling in its own.
+    # One square frame for every variant, so the four markings are directly
+    # comparable. The octahedron's lattice is a band about 3.4 times wider than
+    # it is tall and used to be framed 1500x975 to match it; squaring it leaves
+    # room above and below instead of cropping, since ortho_scale governs the
+    # width and the width is what has to fit.
     if args.width is None or args.height is None:
-        dw, dh = (1500, 975) if variant == "octahedron" else (1000, 1000)
+        dw, dh = 1000, 1000
         args = argparse.Namespace(**vars(args))
         args.width = args.width or dw
         args.height = args.height or dh

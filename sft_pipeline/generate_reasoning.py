@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import sys
 from pathlib import Path
@@ -111,13 +112,43 @@ def is_octahedron(metadata: Dict[str, Any]) -> bool:
     return metadata.get("solid") == "octahedron"
 
 
-def describe_octahedron(faces: Dict[str, Any]) -> str:
+# The order face values 1..8 take, matching SYMBOL_ORDER in blender_render.py
+# and the contours bake_symbols.py writes. A symbol die shows these instead of
+# digits or pips, so the reasoning has to name what is actually on the face --
+# without this the model is shown a heart and told to call it "1".
+SYMBOL_NAMES = ["heart", "arrow", "triangle", "crescent moon", "star", "cross",
+                "circle", "square"]
+
+
+def uses_symbols(metadata: Dict[str, Any]) -> bool:
+    """True when this puzzle's faces carry symbols rather than digits or pips."""
+    return bool(metadata.get("net_symbol_image"))
+
+
+def mark(value: Any, symbols: bool) -> str:
+    """
+    How one face reads.
+
+    On a symbol die the value is still the thing being tracked -- opposite
+    faces sum to 7 or 9 by value, not by picture -- so both are given: the
+    model sees the symbol and reasons with the number behind it.
+    """
+    if not symbols or not isinstance(value, int) or not 1 <= value <= len(SYMBOL_NAMES):
+        return str(value)
+    return f"{SYMBOL_NAMES[value - 1]} ({value})"
+
+
+def describe_octahedron(faces: Dict[str, Any], symbols: bool = False) -> str:
     """The eight-faced die's state, worded the way the picture shows it."""
+    def seq(v):
+        if isinstance(v, (list, tuple)):
+            return "[" + ", ".join(mark(x, symbols) for x in v) + "]"
+        return mark(v, symbols)
     return (
-        f"bottom {faces['bottom']}, "
-        f"opposite the bottom {faces['opposite_the_bottom']}, "
-        f"visible sides {faces['visible_sides']}, "
-        f"hidden sides {faces['hidden_sides']}"
+        f"bottom {seq(faces['bottom'])}, "
+        f"opposite the bottom {seq(faces['opposite_the_bottom'])}, "
+        f"visible sides {seq(faces['visible_sides'])}, "
+        f"hidden sides {seq(faces['hidden_sides'])}"
     )
 
 
@@ -166,24 +197,36 @@ def step_images(puzzle_dir: Path, metadata: Dict[str, Any], step: Dict[str, Any]
     return before, after
 
 
-def describe(die: Dict[str, int]) -> str:
+def describe(die: Dict[str, int], symbols: bool = False) -> str:
     """Face values, labelled the way they are described to the model."""
-    return ", ".join(f"{label} {die[key]}" for key, label in FACE_NAMES.items())
+    return ", ".join(f"{label} {mark(die[key], symbols)}"
+                     for key, label in FACE_NAMES.items())
 
 
-def build_step_prompt(step: Dict[str, Any], octahedron: bool = False) -> str:
+# Appended when the die carries symbols, so the model names what it can see.
+SYMBOL_NOTE = """
+This die is marked with symbols rather than digits or pips. Each face is given
+below as its symbol with the value it stands for in brackets. Refer to the
+faces by their symbols, and reason with the values behind them (opposite faces
+still sum as the rules say). Do not claim a face shows a number.
+"""
+
+
+def build_step_prompt(step: Dict[str, Any], octahedron: bool = False,
+                      symbols: bool = False) -> str:
+    note = SYMBOL_NOTE if symbols else ""
     if octahedron:
         return (
-            f"{OCTAHEDRON_PROMPT}\n\n"
+            f"{OCTAHEDRON_PROMPT}{note}\n\n"
             f"Direction rolled: {step['direction_name']}\n"
-            f"Faces before: {describe_octahedron(step['faces_before'])}\n"
-            f"Faces after: {describe_octahedron(step['faces_after'])}\n"
+            f"Faces before: {describe_octahedron(step['faces_before'], symbols)}\n"
+            f"Faces after: {describe_octahedron(step['faces_after'], symbols)}\n"
         )
     return (
-        f"{PROMPT}\n\n"
+        f"{PROMPT}{note}\n\n"
         f"Direction rolled: {step['direction_name']}\n"
-        f"Faces before: {describe(step['die_before'])}\n"
-        f"Faces after: {describe(step['die_after'])}\n"
+        f"Faces before: {describe(step['die_before'], symbols)}\n"
+        f"Faces after: {describe(step['die_after'], symbols)}\n"
     )
 
 
@@ -238,6 +281,7 @@ def generate_for_puzzle(
 
     by_key = {(r.get("path"), r["step"]): r for r in existing.get("steps", [])}
     octa = is_octahedron(metadata)
+    syms = uses_symbols(metadata)
 
     written = 0
     for step in metadata["steps"]:
@@ -257,7 +301,7 @@ def generate_for_puzzle(
             png_part(before),
             text_part("Board after this roll:"),
             png_part(after),
-            text_part(build_step_prompt(step, octahedron=octa)),
+            text_part(build_step_prompt(step, octahedron=octa, symbols=syms)),
         ]
 
         try:
@@ -292,6 +336,11 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--overwrite", action="store_true")
+    # Each puzzle is independent and writes only its own cot_reasoning.json, so
+    # they can run at once. Throughput keeps climbing with concurrency (measured
+    # 3.5x at 8 workers, 5.4x at 16) -- the API, not the client, is the limit.
+    ap.add_argument("--workers", type=int, default=8,
+                    help="concurrent requests (1 = the old sequential behaviour)")
     args = ap.parse_args()
 
     client = make_client()
@@ -303,12 +352,33 @@ def main() -> None:
         sys.exit(f"No puzzles found under {args.output_dir}")
 
     total = 0
-    for i, puzzle_dir in enumerate(puzzle_dirs, 1):
-        written = generate_for_puzzle(
-            client, puzzle_dir, args.model, overwrite=args.overwrite
-        )
-        total += written
-        print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: {written} steps written")
+    if args.workers <= 1:
+        for i, puzzle_dir in enumerate(puzzle_dirs, 1):
+            written = generate_for_puzzle(
+                client, puzzle_dir, args.model, overwrite=args.overwrite
+            )
+            total += written
+            print(f"[{i}/{len(puzzle_dirs)}] {puzzle_dir}: {written} steps written")
+    else:
+        done = 0
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {
+                pool.submit(generate_for_puzzle, client, d, args.model,
+                            overwrite=args.overwrite): d
+                for d in puzzle_dirs
+            }
+            for fut in as_completed(futures):
+                d = futures[fut]
+                done += 1
+                try:
+                    written = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one puzzle must not stop the run
+                    print(f"[{done}/{len(puzzle_dirs)}] {d}: FAILED {exc}",
+                          file=sys.stderr)
+                    continue
+                total += written
+                print(f"[{done}/{len(puzzle_dirs)}] {d}: {written} steps written",
+                      flush=True)
 
     print(f"\nWrote {total} reasoning texts across {len(puzzle_dirs)} puzzles.")
 

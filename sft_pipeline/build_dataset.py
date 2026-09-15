@@ -56,43 +56,53 @@ def build_record(
         image = (
             f"cot_{tag}_{idx - 1:02d}.png" if tag else f"cot_{idx - 1:02d}.png"
         )
-        steps.append(
-            {
-                "step": idx,
-                "path": tag,
-                "direction": step["direction"],
-                "direction_name": step["direction_name"],
-                "image": image,
-                "reasoning": record["reasoning"],
-                "die_after": step["die_after"],
-                "bottom_face": step["bottom_face"],
-                "running_bottom_sum": step["running_bottom_sum"],
-            }
-        )
+        # The two solids record a step differently: the cube carries
+        # `direction`/`die_after`/`running_bottom_sum`, the octahedron carries
+        # `faces_after` and no running sum. Copy whichever the puzzle has
+        # rather than assuming the cube's shape.
+        entry = {
+            "step": idx,
+            "path": tag,
+            "direction_name": step["direction_name"],
+            "image": image,
+            "reasoning": record["reasoning"],
+            "bottom_face": step["bottom_face"],
+        }
+        for key in ("direction", "die_after", "running_bottom_sum",
+                    "faces_after", "lattice_step"):
+            if key in step:
+                entry[key] = step[key]
+        steps.append(entry)
 
     if not steps:
         return None
 
-    return {
+    out = {
         "puzzle_dir": str(puzzle_dir),
         "puzzle_id": metadata["puzzle_id"],
         "variant": metadata["variant"],
         "level": metadata["level"],
         "question": metadata["question"],
         "question_image": metadata["initial_state_image"],
-        "board": metadata["board"],
         "start": metadata["start"],
-        "initial_die": metadata["initial_die"],
         "steps": steps,
         "answer": metadata["answer"],
         "complete": len(steps) == len(metadata["steps"]),
     }
+    # Board shape, starting orientation and the reference net are named
+    # differently per solid and per marking; carry whichever exist.
+    for key in ("board", "initial_die", "solid", "board_radius", "grid",
+                "faces", "face_values", "net_image", "net_symbol_image"):
+        if key in metadata and metadata[key] is not None:
+            out[key] = metadata[key]
+    return out
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build the SFT dataset")
     ap.add_argument("--output-dir", required=True)
-    ap.add_argument("--variant", choices=["top", "sum", "two"], default=None)
+    ap.add_argument("--variant", choices=["top", "sum", "two", "octahedron"],
+                    default=None)
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--dataset", default="dataset.jsonl")
     ap.add_argument("--allow-partial", action="store_true",
